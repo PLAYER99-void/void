@@ -40,6 +40,10 @@ if WIN:
     for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF-8, not the old Windows code page
         if _s is not None and hasattr(_s, "reconfigure"):
             _s.reconfigure(encoding="utf-8", errors="replace")
+MAC = sys.platform == "darwin"               # macOS: OS bits go through macsys.py (the same shape as winsys.py)
+if MAC:
+    import macsys  # noqa: E402
+OSYS = winsys if WIN else macsys if MAC else None   # (None on Linux: command-line tools, below)
 STATIC = APP_DIR / "static"
 try:                                            # written by the release build (and kept in git for git installs)
     VERSION = (APP_DIR / "VERSION").read_text(encoding="utf-8").strip() or "0.0.0"
@@ -333,6 +337,7 @@ def memory_prompt(fresh):
 AUTOSTART_DESKTOP = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "autostart" / "void.desktop"
 HYPR_CONF = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "hypr" / "hyprland.conf"
 HYPR_MARK = "# added by Void (Settings → More → Start when I log in)"
+LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / "void.plist"
 
 
 def sync_autostart():
@@ -346,6 +351,19 @@ def sync_autostart():
                             icon=str(STATIC / "icon.ico"))
         else:
             link.unlink(missing_ok=True)
+        return
+    if MAC:                                   # a LaunchAgent that runs `void show` when you log in
+        launcher = shutil.which("void") or str(Path.home() / ".local/bin/void")
+        try:
+            if on:
+                import plistlib
+                LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
+                LAUNCH_AGENT.write_bytes(plistlib.dumps({"Label": "void", "ProgramArguments": [launcher, "show"],
+                                                         "RunAtLoad": True}))
+            else:
+                LAUNCH_AGENT.unlink(missing_ok=True)
+        except OSError as e:
+            print(f"[void] launch agent: {e}", file=sys.stderr)
         return
     launcher = shutil.which("void") or str(Path.home() / ".local/bin/void")     # ~/.local/bin, or /usr/bin after ninja install
     try:
@@ -465,6 +483,8 @@ def sensitive_paths():
         appdata = Path(os.environ.get("APPDATA") or h / "AppData" / "Roaming")
         docs = h / "Documents"
         dirs += [appdata / "Microsoft" / "Windows" / "Start Menu", docs / "WindowsPowerShell", docs / "PowerShell"]
+    if MAC:
+        dirs += [h / "Library" / "LaunchAgents"]
     return [d.resolve() for d in dirs], [f.resolve() for f in files]
 
 
@@ -473,7 +493,7 @@ def edit_needs_card(path):
     git repo's hooks and config."""
     if path is None:
         return True
-    norm = (lambda x: str(x).lower()) if WIN else str
+    norm = (lambda x: str(x).lower()) if WIN or MAC else str     # (both ignore case: ~/.SSH is ~/.ssh)
     dirs, files = sensitive_paths()
     if any(norm(path) == norm(f) for f in files) or ".git" in path.parts:
         return True
@@ -700,15 +720,15 @@ def capture(kind):
     for old in sorted(SHOTS.glob("void-*.*"))[:-30]:        # keep the folder small
         old.unlink(missing_ok=True)
     out = SHOTS / f"void-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}.png"
-    if WIN:
+    if OSYS:
         if kind == "clipboard":
-            what, val = winsys.clipboard(out)
+            what, val = OSYS.clipboard(out)
             if what == "image":
                 return {"kind": "clipimg", "path": str(_shrink(Path(val))), "label": "copied image"}
             if not val.strip():
                 raise RuntimeError("the clipboard is empty")
             return {"kind": "clip", "text": val[:12000], "label": "copied text"}
-        got = winsys.screenshot(kind, out)
+        got = OSYS.screenshot(kind, out)
         return {"kind": got, "path": str(_shrink(out)),
                 "label": {"screen": "screenshot", "window": "your window", "region": "screen area"}[got]}
     wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
@@ -804,8 +824,8 @@ def attach_prompt(atts):
 
 
 def notify(title, body):
-    if WIN:
-        return winsys.notify(title, body)
+    if OSYS:
+        return OSYS.notify(title, body)
     if shutil.which("notify-send"):
         subprocess.Popen(["notify-send", "-a", "Void", "-i", str(STATIC / "icon.png"), title, body[:300]],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -845,7 +865,7 @@ def _preload_cuda_libs():
 
 
 def _gpu_ok():
-    if CFG["whisper_device"] == "cpu" or not (winsys.gpu_ok() if WIN else os.path.exists("/proc/driver/nvidia/version")):
+    if CFG["whisper_device"] == "cpu" or not (OSYS.gpu_ok() if OSYS else os.path.exists("/proc/driver/nvidia/version")):
         return False
     try:
         import ctranslate2
@@ -993,17 +1013,17 @@ class MicAuto:
             return
         cls.last, cls.last_peak = time.monotonic(), pk
         hint = CFG.get("mic_device") or ""
-        hw = winsys.mic_level(hint) if WIN else None
+        hw = OSYS.mic_level(hint) if OSYS else None
         if clipped > 0.002 or pk > cls.LOUD:
             if hw is not None and hw > 0.15:
-                winsys.set_mic_level(hw * 0.8, hint)
+                OSYS.set_mic_level(hw * 0.8, hint)
                 print(f"[void] mic: your voice clipped — Windows mic level {hw:.0%} → {hw * 0.8:.0%}", file=sys.stderr)
             cls.soft = 1.0
         elif pk * cls.soft < cls.QUIET:
             want = min(2.0, cls.TARGET / pk)      # how much louder it should be, at most double per step
             if hw is not None and hw < 0.99:
                 new = min(1.0, hw * want)
-                winsys.set_mic_level(new, hint)
+                OSYS.set_mic_level(new, hint)
                 print(f"[void] mic: your voice came in quiet — Windows mic level {hw:.0%} → {new:.0%}", file=sys.stderr)
             else:
                 cls.soft = min(8.0, cls.TARGET / pk)
@@ -1031,7 +1051,7 @@ def mic_cmds():
 
 class LinuxMic:
     """A recorder program's output: read(timeout) → bytes (b"" = nothing yet; EOFError if it stopped), close(). On
-    Windows, winsys.Mic has the same shape."""
+    Windows and macOS, winsys.Mic has the same shape."""
 
     def __init__(self, proc, name):
         self.proc, self.name, self.fd = proc, name, proc.stdout.fileno()
@@ -1054,8 +1074,8 @@ class LinuxMic:
 
 def open_mic():
     """Start the first recorder that actually produces audio. Returns (mic, name, first_bytes)."""
-    if WIN:
-        mic = winsys.Mic(RATE, CFG.get("mic_device"))
+    if OSYS:
+        mic = OSYS.Mic(RATE, CFG.get("mic_device"))
         first = mic.read(2.5)
         if not first:
             mic.close()
@@ -1192,8 +1212,8 @@ def reset_whisper():
 
 
 def list_mics():
-    if WIN:
-        return winsys.list_mics()
+    if OSYS:
+        return OSYS.list_mics()
     if not shutil.which("pactl"):
         return []
     out = subprocess.run(["pactl", "-f", "json", "list", "sources"], capture_output=True, text=True).stdout
@@ -1366,9 +1386,9 @@ class Wake:
 
 def doctor():
     print(f"Void doctor (version {VERSION})\n")
-    if WIN:
+    if OSYS:
         print("inputs (any part of a name works as mic_device):")
-        for m in winsys.list_mics():
+        for m in OSYS.list_mics():
             print("  " + m["label"])
         print()
     elif shutil.which("pactl"):
@@ -1379,11 +1399,11 @@ def doctor():
             if ".monitor" not in ln:
                 print("  " + ln + ("   <- default" if dflt and dflt in ln else ""))
         print()
-    print("recorders tried in order:", "sounddevice" if WIN else (", ".join(c[0] for c in mic_cmds()) or "NONE"))
+    print("recorders tried in order:", "sounddevice" if OSYS else (", ".join(c[0] for c in mic_cmds()) or "NONE"))
     print("recording 3 seconds — keep talking the whole time…", flush=True)
     try:
-        if WIN:                                     # (keep every channel, to see which one your voice is on)
-            mic = winsys.Mic(RATE, CFG.get("mic_device"), keep_raw=True)
+        if OSYS:                                    # (keep every channel, to see which one your voice is on)
+            mic = OSYS.Mic(RATE, CFG.get("mic_device"), keep_raw=True)
             name, buf = mic.name, b""
         else:
             mic, name, buf = open_mic()
@@ -1395,7 +1415,7 @@ def doctor():
                 break
         mic.close()
         data = bytes(data[: len(data) // 2 * 2])
-        if WIN:
+        if OSYS:
             i = mic.info
             ch, switched = mic.channel
             print(f"  device: {i['name']} · {i['driver']} · {i['channels']} channel(s) · {i['rate']} Hz"
@@ -1407,7 +1427,7 @@ def doctor():
         print(f"  {name}: {len(data) / 32000:.1f}s captured, loudest {peak:.3f}  [{bar:<30}]")
         # what each channel carries: how loud, and whether there's any talking in it at all
         chans = {"": data}
-        if WIN and mic.channels == 2 and mic.raw:
+        if OSYS and mic.channels == 2 and mic.raw:
             import numpy as np
             st = np.frombuffer(bytes(mic.raw[: len(mic.raw) // 4 * 4]), dtype=np.int16).reshape(-1, 2)
             chans = {f"channel {c + 1}": np.ascontiguousarray(st[:, c]).tobytes() for c in (0, 1)}
@@ -1425,7 +1445,7 @@ def doctor():
         try:
             import wave as _w
             with _w.open(str(wav), "wb") as w:
-                raw = bytes(mic.raw) if WIN and mic.channels == 2 and mic.raw else data
+                raw = bytes(mic.raw) if OSYS and mic.channels == 2 and mic.raw else data
                 w.setnchannels(2 if raw is not data else 1)
                 w.setsampwidth(2)
                 w.setframerate(RATE)
@@ -1433,7 +1453,7 @@ def doctor():
         except Exception:  # noqa: BLE001
             wav = None
         if peak > 0.98:
-            print("  -> CLIPPING: input is too loud — turn the mic down to ~65% in Sound settings" if WIN else
+            print("  -> CLIPPING: input is too loud — turn the mic down to ~65% in Sound settings" if OSYS else
                   "  -> CLIPPING: input is too loud — try: wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 0.65")
         elif talk.get("") == 0 or (len(talk) == 2 and not heard_any):
             print("  -> NO VOICE in what this mic sends, only background noise. Is the mic muted on the headset "
@@ -1813,9 +1833,9 @@ def audio_player_cmd(rate):
 
 
 def make_player(rate):
-    """Something that takes raw 16-bit mono on .stdin: paplay/aplay on Linux, sounddevice on Windows."""
-    if WIN:
-        return winsys.Player(rate)
+    """Something that takes raw 16-bit mono on .stdin: paplay/aplay on Linux, sounddevice on Windows and macOS."""
+    if OSYS:
+        return OSYS.Player(rate)
     return subprocess.Popen(audio_player_cmd(rate), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
 
@@ -1851,7 +1871,7 @@ class Speaker:
 
     @classmethod
     def available(cls):
-        return CFG.get("voice_out", "auto") != "page" and (winsys.can_play() if WIN else audio_player_cmd(22050) is not None)
+        return CFG.get("voice_out", "auto") != "page" and (OSYS.can_play() if OSYS else audio_player_cmd(22050) is not None)
 
     @classmethod
     def _start(cls):
@@ -2045,7 +2065,7 @@ def stress_voice(silent=False):
         globals()["audio_player_cmd"] = lambda rate: [sys.executable, "-c", "import sys\nwhile sys.stdin.buffer.read(65536): pass"]
         globals()["make_player"] = lambda rate: subprocess.Popen(audio_player_cmd(rate), stdin=subprocess.PIPE)
     else:
-        cmd = True if WIN and winsys.can_play() else audio_player_cmd(22050)
+        cmd = True if OSYS and OSYS.can_play() else audio_player_cmd(22050)
         if not cmd:
             print("no audio player (paplay / aplay) — install libpulse or alsa-utils"); return 1
         print(f"player: {cmd[0]}   (you'll hear him say the same few sentences three times)")
@@ -2694,11 +2714,11 @@ def diagnostics():
 def state_info():
     return {
         "version": VERSION, "update": Updates.status(), "update_check": bool(CFG.get("update_check", True)),
-        "platform": "windows" if WIN else "linux", "ptt_hotkey": CFG.get("ptt_hotkey", "") or "",
+        "platform": "windows" if WIN else "macos" if MAC else "linux", "ptt_hotkey": CFG.get("ptt_hotkey", "") or "",
         "presence": "bar" if CFG.get("presence") == "bar" else "orb",
         "bar_edge": CFG.get("bar_edge") if CFG.get("bar_edge") in ("top", "bottom", "left", "right") else "top",
         "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd), "session": bool(ST.session),
-        "tts": tts_engine(), "mic": WIN or bool(mic_cmds()), "stt": "ready" if _whisper else (_whisper_err or "loading"),
+        "tts": tts_engine(), "mic": bool(OSYS) or bool(mic_cmds()), "stt": "ready" if _whisper else (_whisper_err or "loading"),
         "trust": trust(), "model": CFG["model"] or "default", "root": bool(CFG.get("root_mode")) and not WIN, "root_ok": not WIN,
 
         "wake_word": bool(CFG.get("wake_word")), "notify_done": bool(CFG.get("notify_done")),
@@ -2709,7 +2729,7 @@ def state_info():
         "projects": quick.projects(),
         "quick_actions": CFG.get("quick_actions") or [], "memory_count": len(mem_load()),
         "mic_device": CFG.get("mic_device") or "", "whisper_model": CFG.get("whisper_model") or "auto",
-        "can_shoot": WIN or any(shutil.which(t) for t in ("grim", "spectacle", "gnome-screenshot", "maim", "scrot", "import")),
+        "can_shoot": bool(OSYS) or any(shutil.which(t) for t in ("grim", "spectacle", "gnome-screenshot", "maim", "scrot", "import")),
         "eye_color": CFG.get("eye_color") or "#3d9b74", "eye_white": CFG.get("eye_white") or "#f3dccf",
         "pupil_style": CFG.get("pupil_style") or "slit",
         "voice": CFG.get("voice") or "girl", "voice_pitch": voice_preset().get("pitch", 1.0),

@@ -2085,6 +2085,9 @@ function renderPtt(){
   const k=info.ptt_hotkey||'', b=$('#pttSet');
   if(info.platform==='windows'){
     b.textContent=pttCapture?'Press your keys…':(k||'Set a hotkey'); $('#pttOff').hidden=!k||pttCapture;
+  }else if(info.platform==='macos'){
+    $('#pttBar').hidden=true;
+    $('#pttHelp').innerHTML=`Not on macOS yet: hold <code>Space</code> while his window has focus, or bind <code>void listen</code> to a key (e.g. a Shortcuts or Raycast hotkey).`;
   }else{
     const [m,key]=pttLinux(k); $('#pttBar').hidden=true;
     $('#pttHelp').innerHTML=`Hold a key combo anywhere to talk. Bind it in your desktop, e.g. Hyprland:<br><code>bind = ${esc(m)}, ${esc(key)}, exec, void ptt-down</code><br><code>bindr = ${esc(m)}, ${esc(key)}, exec, void ptt-up</code><br>sway: <code>bindsym</code> … <code>void ptt-down</code> and <code>bindsym --release</code> … <code>void ptt-up</code>. Other desktops: bind <code>void listen</code>.`;

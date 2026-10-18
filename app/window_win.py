@@ -1,5 +1,6 @@
 """Void's window on Windows: a see-through, always-on-top, frameless Qt window with his page in it (QtWebEngine,
-i.e. Chromium). It speaks the same messages with the page as window.py (the GTK/WebKit window on Linux).
+i.e. Chromium). It speaks the same messages with the page as window.py (the GTK/WebKit window on Linux). macOS uses
+this window too, with macsys.py for the few things Qt can't do itself.
 
     window_win.py URL [toggle|show|hide|quit|listen|look|live|hover|hover-on|hover-off]
     window_win.py URL --selftest out.png      (load him, save a picture of the window, quit — for test machines)
@@ -21,7 +22,11 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP))
-import winsys  # noqa: E402
+MAC = sys.platform == "darwin"
+if MAC:
+    import macsys as winsys  # noqa: E402  (the same shape: data_dir & co., plus the Cocoa bits used below)
+else:
+    import winsys  # noqa: E402
 for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF-8, not the old Windows code page
     if _s is not None and hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
@@ -195,6 +200,8 @@ class VoidWindow(QWidget):
 
         self._load_pos()
         self.show()
+        if MAC:
+            winsys.keep_on_all_spaces(self.winId())
         self.remote = Remote()
         self.remote.cmd.connect(self._remote_cmd)
         threading.Thread(target=self._serve, daemon=True).start()
@@ -370,7 +377,8 @@ class VoidWindow(QWidget):
         t0 = time.monotonic()
 
         def check():
-            if not (ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000) or time.monotonic() - t0 > 60:
+            down = winsys.mouse_down() if MAC else ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000
+            if not down or time.monotonic() - t0 > 60:
                 t.stop()
                 if self._drag_t is t:
                     self._drag_t = None
@@ -415,6 +423,9 @@ class VoidWindow(QWidget):
         if on == self.through:
             return
         self.through = on
+        if MAC:
+            winsys.set_click_through(self.winId(), on)
+            return
         hwnd = int(self.winId())
         u = ctypes.windll.user32
         ex = u.GetWindowLongW(hwnd, -20)                                  # GWL_EXSTYLE
@@ -504,8 +515,14 @@ class VoidWindow(QWidget):
                 last = time.monotonic()
                 log("the server isn't answering — starting it again")
                 try:
-                    import launch_win
-                    launch_win._start("server", [str(APP / "server.py")])
+                    if MAC:
+                        import subprocess
+                        with open(DATA / "server.log", "ab") as out:
+                            subprocess.Popen([sys.executable, str(APP / "server.py")], stdout=out, stderr=subprocess.STDOUT,
+                                             stdin=subprocess.DEVNULL, start_new_session=True)
+                    else:
+                        import launch_win
+                        launch_win._start("server", [str(APP / "server.py")])
                 except Exception as e:  # noqa: BLE001
                     log(f"couldn't restart the server: {e}")
 
@@ -513,6 +530,9 @@ class VoidWindow(QWidget):
         """The push-to-talk hotkey, anywhere in Windows: a low-level keyboard hook (RegisterHotKey can't tell when a
         key is let go). It only compares each key with the combo; everything else passes straight through untouched,
         and nothing is recorded. The combo's own key presses are kept from the app you're in."""
+        if MAC:                                                          # (needs Input Monitoring: not yet)
+            log("push-to-talk hotkey: not on macOS yet — hold Space in his window, or bind `void listen` to a key")
+            return
         import ctypes.wintypes as wt
         user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
         LRESULT = ctypes.c_ssize_t
@@ -692,6 +712,8 @@ def main():
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv[:1])
     app.setQuitOnLastWindowClosed(False)
+    if MAC:
+        winsys.no_dock_icon()
     win = VoidWindow(url)
     if cmd in ("listen", "look", "live", "hover", "hover-on"):
         QTimer.singleShot(1800, lambda: win._remote_cmd(cmd))         # first launch: let the page load, then do it

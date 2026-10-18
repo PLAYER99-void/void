@@ -11,9 +11,14 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 WIN = os.name == "nt"
+MAC = sys.platform == "darwin"
 if WIN:
     import winsys   # Windows versions of volume / media keys / brightness / apps / lock
+if MAC:
+    import macsys   # the macOS ones, the same shape
+OSYS = winsys if WIN else macsys if MAC else None
 import threading
 import time
 from datetime import datetime, timedelta
@@ -51,8 +56,8 @@ def _num(s):
 
 # ---------------------------------------------------------------- volume
 def _volume_pct():
-    if WIN:
-        return winsys.volume_get()
+    if OSYS:
+        return OSYS.volume_get()
     if shutil.which("wpctl"):
         ok, out = _run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
         m = re.search(r"([\d.]+)", out)
@@ -68,8 +73,8 @@ def _volume_pct():
 
 
 def _volume(op, val=None):
-    if WIN:
-        if not winsys.volume_set(op, val):
+    if OSYS:
+        if not OSYS.volume_set(op, val):
             return None
         if op in ("mute", "unmute"):
             return {"say": "Muted." if op == "mute" else "Sound's back on.", "mood": "wink", "sfx": "ok"}
@@ -96,10 +101,14 @@ def _volume(op, val=None):
 
 # ---------------------------------------------------------------- media
 def _media(op):
-    if WIN:
+    if MAC and op == "what":
+        now = macsys.now_playing()
+        return {"say": f"That's {now}." if now else "Nothing's playing.", "mood": "curious"}
+    if OSYS:
         if op == "what":
             return {"say": "I can't see what's playing on Windows yet.", "mood": "unsure"}
-        winsys.media(op)
+        if not OSYS.media(op):
+            return {"say": "I can't find anything playing.", "mood": "confused"}
         return {"say": {"pause": "Okay.", "play": "Okay.", "toggle": "Okay.", "next": "Next one.",
                         "previous": "Going back."}[op], "mood": "happy", "sfx": "ok"}
     if not shutil.which("playerctl"):
@@ -117,10 +126,11 @@ def _media(op):
 
 # ---------------------------------------------------------------- brightness
 def _bright(op, val=None):
-    if WIN:
-        new = winsys.brightness(op, val)
+    if OSYS:
+        new = OSYS.brightness(op, val)
         return ({"say": f"Brightness {new} percent.", "mood": "happy"} if new is not None else
-                {"say": "I can only change the brightness of laptop screens on Windows.", "mood": "confused"})
+                {"say": "I can't change the brightness on a Mac yet." if MAC else
+                 "I can only change the brightness of laptop screens on Windows.", "mood": "confused"})
     if not shutil.which("brightnessctl"):
         return {"say": "I need brightnessctl for that — pacman -S brightnessctl.", "mood": "confused"}
     arg = f"{int(val)}%" if op == "set" else f"{int(val or 10)}%{'+' if op == 'up' else '-'}"
@@ -274,8 +284,8 @@ def _find_app(name):
 
 
 def _open_app(name):
-    if WIN:
-        nm = winsys.open_app(name)
+    if OSYS:
+        nm = OSYS.open_app(name)
         return {"say": f"Opening {nm}.", "mood": "happy", "sfx": "ok"} if nm else None
     hit = _find_app(name)
     if not hit:
@@ -293,8 +303,8 @@ def _open_app(name):
 
 
 def _lock():
-    if WIN:
-        winsys.lock()
+    if OSYS:
+        OSYS.lock()
         return {"say": "Locking up. See you soon!", "mood": "wink"}
     for cmd in (["loginctl", "lock-session"], ["hyprlock"], ["swaylock", "-f"], ["xdg-screensaver", "lock"]):
         if shutil.which(cmd[0]):
