@@ -21,7 +21,8 @@ NO_WINDOW = 0                   # (Windows' CREATE_NO_WINDOW: nothing to hide he
 def _run(cmd, timeout=10):
     """→ (ok, stdout)"""
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                           env={**os.environ, "LANG": "en_US.UTF-8"})   # (no LANG → pbpaste hands back MacRoman)
         return r.returncode == 0, (r.stdout or "").strip()
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)

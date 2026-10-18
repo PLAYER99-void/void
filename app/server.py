@@ -2333,6 +2333,10 @@ def build_cmd(binary, partial, live=False):
 def claude_env():
     env = dict(os.environ)
     env["PATH"] = str(Path.home() / ".local" / "bin") + os.pathsep + env.get("PATH", "")
+    if sys.platform == "darwin" and "UTF-8" not in (env.get("LC_ALL") or env.get("LC_CTYPE") or env.get("LANG") or "").upper():
+        env["LANG"] = "en_US.UTF-8"   # started outside a terminal → no LANG → pbcopy turns UTF-8 into MacRoman
+        env.pop("LC_ALL", None)
+        env.pop("LC_CTYPE", None)
     if CFG.get("root_mode") and not WIN:
         env["SUDO_ASKPASS"] = str(APP_DIR / "askpass.py")
     env["VOID_PORT"], env["VOID_TOKEN"] = str(CFG["port"]), TOOL_TOKEN   # (the limited one: every command Claude runs sees it)
