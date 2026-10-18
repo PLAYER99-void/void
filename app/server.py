@@ -10,6 +10,7 @@ Local server (127.0.0.1 only) that:
 """
 import argparse
 import array
+import atexit
 import io
 import json
 import math
@@ -33,6 +34,7 @@ from urllib.parse import urlparse
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 import quick  # noqa: E402
+import agents  # noqa: E402
 WIN = os.name == "nt"                        # Windows: OS bits go through winsys.py instead of Linux command-line tools
 if WIN:
     import winsys  # noqa: E402
@@ -103,6 +105,8 @@ DEFAULTS = {
     "model": "",
     "extra_args": [],
     "partial_messages": True,
+    # one Claude Code process per chat, so he answers right away while his subagents keep working (false: one per message)
+    "long_lived": True,
     "voice_prompt": VOICE_PROMPT,
     # auto = small.en on an NVIDIA GPU (fast + accurate), base.en on CPU. Or pin one: tiny.en / base.en / small.en / medium.en
     "whisper_model": "auto",
@@ -317,12 +321,17 @@ def hist_load(limit=60):
     return out
 
 
+def notes_text():
+    notes = mem_load()
+    return ("Things the user asked you to remember (keep using them):\n" +
+            "\n".join(f"- {n['text']}" for n in notes[-60:])) if notes else ""
+
+
 def memory_prompt(fresh):
     parts = []
-    notes = mem_load()
+    notes = notes_text()
     if notes:
-        parts.append("Things the user asked you to remember (keep using them):\n" +
-                     "\n".join(f"- {n['text']}" for n in notes[-60:]))
+        parts.append(notes)
     if fresh:                                   # a new conversation: give him a sense of what happened lately
         recent = [h for h in hist_load(8) if h.get("you")][:6]
         if recent:
@@ -548,7 +557,8 @@ class Approvals:
         with self.lock:
             self.always.clear()
 
-    def ask(self, tool, inp, timeout=600):
+    def ask(self, tool, inp, timeout=600, agent=None):
+        """agent: the subagent asking ({id, type, desc}), None for him."""
         # the raw, complete command (summarize_input() shortens it and folds newlines away)
         cmd = str(inp.get("command") or "").strip() if tool == "Bash" and isinstance(inp, dict) else ""
         # what "always" covers: the whole command (never just its first word), the one file, the one website
@@ -570,8 +580,14 @@ class Approvals:
         with self.lock:
             self.pending[aid] = item
         BUS.pub(t="approve", id=aid, tool=tool, detail=item["detail"], key=key, say=approval_say(tool, inp),
-                always=can_always)
-        ev.wait(timeout)
+                always=can_always, agent=agent)
+        if agent:
+            BRAIN.set_waiting(agent["id"], True)
+        try:
+            ev.wait(timeout)
+        finally:
+            if agent:
+                BRAIN.set_waiting(agent["id"], False)
         with self.lock:
             self.pending.pop(aid, None)
         ans = item["ans"] or "no"
@@ -2247,15 +2263,6 @@ def panel_input(name, inp):
     return out
 
 
-def result_text(c):
-    if isinstance(c, str):
-        return c
-    if isinstance(c, list):
-        return "\n".join(b.get("text", "") if isinstance(b, dict) and b.get("type") == "text" else
-                         ("[image]" if isinstance(b, dict) and b.get("type") == "image" else "") for b in c)
-    return ""
-
-
 def trust():
     return "root" if CFG.get("root_mode") and not WIN else (CFG.get("trust") if CFG.get("trust") in ("ask", "trust", "readonly") else "ask")
 
@@ -2274,31 +2281,44 @@ def hooks_file():
     return str(HOOKS_PATH)
 
 
-def build_cmd(binary, partial):
-    c = [binary, "-p", "--output-format", "stream-json", "--verbose"]
-    if partial:
-        c.append("--include-partial-messages")
+def perm_args():
     tr = trust()
     if tr in ("root", "trust"):
-        c += ["--permission-mode", "bypassPermissions"]
-    elif tr == "readonly":
-        c += ["--permission-mode", "plan"]
-    else:
-        c += ["--permission-mode", "acceptEdits", "--settings", hooks_file()]
-    mdl = CFG["model"]
-    if mdl == "auto":                            # quick chit-chat → the fast model; real work → the default one
-        mdl = ST.auto_pick or ""
-    if mdl:
-        c += ["--model", mdl]
+        return ["--permission-mode", "bypassPermissions"]
+    if tr == "readonly":
+        return ["--permission-mode", "plan"]
+    return ["--permission-mode", "acceptEdits", "--settings", hooks_file()]
+
+
+def base_prompt():
+    """The system prompt without the memory notes (those change mid-chat: see notes_text())."""
     sp = CFG["voice_prompt"] or ""
     if CFG.get("root_mode"):
         sp += ("\n\nRoot mode is ON: the user allows you to run any command, including ones that need root. "
                "When you need root, use `sudo -A ...` (Void asks the user for the password itself, or fills it in "
                "automatically; never ask for the password in chat). Still be careful: say what you're about to change before destructive or "
                "system-wide actions.")
-    if tr == "ask":
+    if trust() == "ask":
         sp += ("\n\nThe user approves commands and web requests one at a time (Void asks them out loud). "
                "Prefer one clear command over many small ones, and don't retry a command the user said no to.")
+    return sp
+
+
+def pick_model():
+    mdl = CFG["model"]
+    return (ST.auto_pick or "") if mdl == "auto" else mdl       # auto: quick chit-chat → the fast model
+
+
+def build_cmd(binary, partial, live=False):
+    """live: the long-lived process (messages come in on stdin as stream-json; see agents.Brain)."""
+    c = [binary, "-p"] + (["--input-format", "stream-json"] if live else []) + ["--output-format", "stream-json", "--verbose"]
+    if partial:
+        c.append("--include-partial-messages")
+    c += perm_args()
+    mdl = pick_model()
+    if mdl:
+        c += ["--model", mdl]
+    sp = base_prompt()
     mp = memory_prompt(fresh=not ST.session)
     if mp:
         sp += "\n\n" + mp
@@ -2310,18 +2330,56 @@ def build_cmd(binary, partial):
     return c
 
 
-def run_claude(prompt, emit, partial):
-    binary = claude_bin()
-    if not binary:
-        emit(t="error", text=f"Couldn't find Claude Code (`{CFG['claude_bin']}`). Install it, run `claude` once to "
-                             f"log in, or set claude_bin in {CONF_PATH}.")
-        return "done"
+def claude_env():
     env = dict(os.environ)
     env["PATH"] = str(Path.home() / ".local" / "bin") + os.pathsep + env.get("PATH", "")
     if CFG.get("root_mode") and not WIN:
         env["SUDO_ASKPASS"] = str(APP_DIR / "askpass.py")
     env["VOID_PORT"], env["VOID_TOKEN"] = str(CFG["port"]), TOOL_TOKEN   # (the limited one: every command Claude runs sees it)
-    proc = subprocess.Popen(build_cmd(binary, partial), cwd=ST.cwd, env=env, stdin=subprocess.PIPE,
+    return env
+
+
+def brain_launch(binary, partial):
+    """Everything the long-lived process needs for this message (see agents.Brain for what each part restarts)."""
+    return {"cmd": build_cmd(binary, partial, live=True), "perm": (trust(), ST.cwd),
+            "sig": (binary, partial, base_prompt(), tuple(CFG["extra_args"])), "session": ST.session,
+            "model": pick_model(), "notes": notes_text(), "cwd": ST.cwd, "env": claude_env()}
+
+
+def describe_tool(name, inp):
+    return summarize_input(inp), panel_input(name, inp)
+
+
+def brain_pub(**ev):
+    if ev.get("t") == "followup":                 # a subagent reported back and he said so: it goes in the history too
+        try:
+            hist_add({"ts": int(time.time()), "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd),
+                      "you": "(a background task finished)", "him": untag(ev.get("text", "")).strip()[-6000:],
+                      "tools": [], "ok": bool(ev.get("ok")), "session": ST.session, "followup": True})
+        except OSError:
+            pass
+    BUS.pub(**ev)
+
+
+def brain_session(sid):
+    if sid and sid != ST.session:
+        ST.session = sid
+        ST.save()
+
+
+BRAIN = agents.Brain(brain_pub, on_session=brain_session, describe=describe_tool)
+LONG = {"ok": True}                              # (false once this Claude Code turned out not to take stream-json input)
+
+
+def run_claude(prompt, emit, partial):
+    """The old way: one process per message ("long_lived": false, or a Claude Code without stream-json input). Same
+    events; his subagents show too, but he stays busy until they're done (Claude Code waits for them before exiting)."""
+    binary = claude_bin()
+    if not binary:
+        emit(t="error", text=f"Couldn't find Claude Code (`{CFG['claude_bin']}`). Install it, run `claude` once to "
+                             f"log in, or set claude_bin in {CONF_PATH}.")
+        return "done"
+    proc = subprocess.Popen(build_cmd(binary, partial), cwd=ST.cwd, env=claude_env(), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1,
                             encoding="utf-8", errors="replace", **spawn_kw())
     ST.proc = proc
@@ -2334,7 +2392,8 @@ def run_claude(prompt, emit, partial):
     except BrokenPipeError:
         pass
 
-    got_result = streamed = emitted = False
+    stream = agents.Stream(describe_tool, oneshot=True)
+    got_result = emitted = False
     for line in proc.stdout:
         line = line.strip()
         if not line:
@@ -2343,54 +2402,22 @@ def run_claude(prompt, emit, partial):
             o = json.loads(line)
         except ValueError:
             continue
-        ty = o.get("type")
-        if ty == "system" and o.get("subtype") == "init":
-            if o.get("session_id"):
-                ST.session = o["session_id"]
-                ST.save()
-            emit(t="init", model=o.get("model", ""))
-        elif ty == "stream_event":
-            ev = o.get("event") or {}
-            d = ev.get("delta") or {}
-            if ev.get("type") == "content_block_delta" and d.get("type") == "text_delta":
-                streamed = emitted = True
-                emit(t="delta", text=d.get("text", ""))
-            elif ev.get("type") == "message_start":
-                emit(t="break")
-        elif ty == "assistant":
-            for b in (o.get("message") or {}).get("content") or []:
-                if b.get("type") == "text" and not streamed and b.get("text"):
-                    emitted = True
-                    emit(t="break")
-                    emit(t="delta", text=b["text"])
-                elif b.get("type") == "tool_use":
-                    emitted = True
-                    emit(t="tool", name=b.get("name", "tool"), detail=summarize_input(b.get("input")), id=b.get("id", ""),
-                         input=panel_input(b.get("name", ""), b.get("input")))
-        elif ty == "user":
-            # tool output comes back as a "user" message — the code panel shows it (terminal output, file contents, hits)
-            content = (o.get("message") or {}).get("content")
-            for b in content if isinstance(content, list) else []:
-                if isinstance(b, dict) and b.get("type") == "tool_result":
-                    txt = result_text(b.get("content"))
-                    lines = txt.splitlines()
-                    if len(lines) > 80:
-                        lines = lines[:40] + [f"… {len(lines) - 70} more lines …"] + lines[-30:]
-                    emit(t="toolres", id=b.get("tool_use_id", ""), text=_cut("\n".join(lines), 6000),
-                         is_error=bool(b.get("is_error")))
-        elif ty == "result":
-            got_result = True
-            if o.get("session_id"):
-                ST.session = o["session_id"]
-                ST.save()
-            denied = o.get("permission_denials") or []
-            if denied:
-                emit(t="denied", tools=sorted({d.get("tool_name", "?") for d in denied}))
-            emit(t="result", text=o.get("result") or "", is_error=bool(o.get("is_error")),
-                 cost=o.get("total_cost_usd"), turns=o.get("num_turns"))
+        for dest, ev in stream.feed(o):
+            if dest == "session":
+                brain_session(ev)
+            elif dest == "bus":
+                if ev.get("t") != "followup":         # (its words already came with the rest)
+                    BUS.pub(**ev)
+            else:
+                got_result = got_result or dest == "end"
+                emitted = emitted or ev.get("t") in ("delta", "tool")
+                emit(**ev)
     proc.wait()
     t_err.join(timeout=2)
     ST.proc = None
+    for _, ev in stream.end_all("stopped" if ST.stopped else "failed"):
+        BUS.pub(**ev)
+    agents.kill_tree(proc, grace=0.5)             # (anything it left behind in its group)
     if got_result:
         return "done"
     e = "".join(err).strip()
@@ -2407,7 +2434,9 @@ def run_claude(prompt, emit, partial):
 
 
 def stop_proc():
+    """Stop: his answer and every subagent."""
     APPROVALS.cancel_all()
+    BRAIN.stop()
     p = ST.proc
     if p and p.poll() is None:
         ST.stopped = True
@@ -2419,6 +2448,13 @@ def stop_proc():
             os.killpg(p.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+
+
+def end_chat(wait=False):
+    """A new chat, a resumed one, another folder, quitting: the process and its subagents go, and so do their cards."""
+    APPROVALS.cancel_all()
+    BRAIN.shutdown(wait=wait)
+    APPROVALS.reset()
 
 
 # ---------------------------------------------------------------- updates
@@ -2744,6 +2780,7 @@ def state_info():
                    for k, v in VOICES.items()],
         "voice_engine": tts_engine() or "none",
         "claude": bool(claude_bin()), "busy": ST.lock.locked(), "config": str(CONF_PATH),
+        "subagents": BRAIN.running(),
     }
 
 
@@ -2936,8 +2973,11 @@ class Handler(BaseHTTPRequestHandler):
                             qa.append({"label": str(a["label"]).strip()[:40], "prompt": str(a["prompt"]).strip()[:1000],
                                        **({"attach": a["attach"]} if a.get("attach") in ("screen", "clipboard") else {})})
                     upd["quick_actions"] = qa
+                was = trust()
                 if upd:
                     save_config(**upd)
+                if trust() != was:
+                    end_chat()
                 if "whisper_model" in upd:
                     reset_whisper()
                 if "autostart" in upd:
@@ -2951,9 +2991,9 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/quick":
                 r = quick.handle(json.loads(self._body() or b"{}").get("text", ""))
                 if r and r.get("cd"):
+                    end_chat()
                     ST.cwd, ST.session = r["cd"], None
                     ST.save()
-                    APPROVALS.reset()
                     r["state"] = state_info()
                 return self._json({"handled": bool(r), **(r or {})})
             if p == "/api/projects":
@@ -2974,7 +3014,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "why": "just looking at the screen"})
                 if b.get("tool") in EDIT_TOOLS and not edit_needs_card(edit_path(b.get("input"))):
                     return self._json({"ok": True})                       # an ordinary edit in the project: no card
-                return self._json(APPROVALS.ask(str(b.get("tool") or "?"), b.get("input") or {}))
+                agent = BRAIN.agent_info(b.get("agent_id"), b.get("agent_type"))
+                return self._json(APPROVALS.ask(str(b.get("tool") or "?"), b.get("input") or {}, agent=agent))
             if p == "/api/askpass":                   # askpass.py (sudo -A) is waiting for the password
                 if WIN or not CFG.get("root_mode"):   # the password card only exists in root mode
                     return self._json({"error": "root mode is off"}, 403)
@@ -3036,25 +3077,25 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": f"that folder is gone: {pretty_path(d)}"}, 400)
                 if not d_path.is_dir():
                     return self._json({"error": f"that folder is gone: {pretty_path(str(d_path))}"}, 400)
+                end_chat()
                 ST.cwd, ST.session = str(d_path), b.get("session") or None
                 ST.save()
-                APPROVALS.reset()
                 return self._json(state_info())
             if p == "/api/devices":
                 return self._json({"mics": list_mics()})
             if p == "/api/new":
+                end_chat()
                 ST.session = None
                 ST.save()
-                APPROVALS.reset()
                 return self._json(state_info())
             if p == "/api/cd":
                 raw = json.loads(self._body() or b"{}").get("path", "~")
                 path = os.path.abspath(os.path.join(ST.cwd, os.path.expanduser(raw.strip() or "~")))
                 if not os.path.isdir(path):
                     return self._json({"error": f"not a directory: {pretty_path(path)}"}, 400)
+                end_chat()
                 ST.cwd, ST.session = path, None
                 ST.save()
-                APPROVALS.reset()
                 return self._json(state_info())
             return self._json({"error": "not found"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -3207,14 +3248,18 @@ class Handler(BaseHTTPRequestHandler):
             ST.stopped = False
             partial = bool(CFG["partial_messages"])
             for _ in range(3):
-                r = run_claude(prompt, emit, partial)
+                binary = claude_bin() if CFG.get("long_lived", True) and LONG["ok"] else None
+                r = BRAIN.ask(brain_launch(binary, partial), prompt, emit) if binary else run_claude(prompt, emit, partial)
+                if r == "unsupported":             # an older Claude Code: one process per message, like before
+                    LONG["ok"] = False
+                    continue
                 if r == "retry_nopartial":
                     partial = False
                     continue
                 if r == "retry_fresh":
+                    end_chat()
                     ST.session = None
                     ST.save()
-                    APPROVALS.reset()
                     emit(t="note", text="previous session couldn't be resumed — started fresh")
                     continue
                 break
@@ -3315,6 +3360,16 @@ def main():
     except OSError:
         pass
     srv.daemon_threads = True
+
+    def bye(*_):
+        raise SystemExit(0)                    # (→ atexit below)
+    atexit.register(lambda: (end_chat(wait=True), ST.proc and agents.kill_tree(ST.proc, grace=0.5)))
+    for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)):
+        if sig is not None:
+            try:
+                signal.signal(sig, bye)
+            except (OSError, ValueError):
+                pass
     print(f"[void] http://127.0.0.1:{CFG['port']}/  cwd={ST.cwd}  tts={tts_engine()}", flush=True)
     try:
         srv.serve_forever()
