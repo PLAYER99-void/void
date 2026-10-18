@@ -1139,7 +1139,7 @@ class Listen:
         emit(t="open", rec=name)
         pcm = bytearray()
         t0 = time.monotonic()
-        floor, spoke, voiced, last_voice, peak, clipped = None, False, 0, t0, 0.0, 0
+        floor, spoke, voiced, last_voice, peak, clipped, clip_run = None, False, 0, t0, 0.0, 0, 0
         reason = "stop"
         try:
             while True:
@@ -1150,7 +1150,11 @@ class Listen:
                     s = memoryview(fr).cast("h")
                     rms = (sum(x * x for x in s) / n) ** 0.5 / 32768.0 * MicAuto.soft
                     peak = max(peak, rms)
-                    clipped += sum(1 for x in s if x > 32500 or x < -32500)
+                    # only sustained clipping counts (≥3 frames in a row): a key click or a bump is a one-frame spike
+                    c = sum(1 for x in s if x > 32500 or x < -32500)
+                    clip_run = clip_run + 1 if c else 0
+                    if clip_run >= 3:
+                        clipped += c
                     now = time.monotonic()
                     # noise floor: settles over the first ~quarter second, then drifts slowly toward quiet
                     if floor is None:
