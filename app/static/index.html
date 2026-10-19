@@ -1308,7 +1308,7 @@ function miniAdd(ev){
   if(m){ if(ev.type) m.type=ev.type; if(ev.desc) m.desc=ev.desc; return m; }
   const n=performance.now(), rm=RM.matches;
   m={id:ev.id, type:ev.type||'', desc:ev.desc||'', bg:!!ev.bg, waiting:!!ev.waiting, ...miniOrbit(ev.id),
-     st:'bud', t0:n, born:n, dur:rm?320:780, th:0, spdK:1, flat:0, tickAt:-1e9, glance:[0,0], blinkAt:n+1500+Math.random()*3000, px:null, py:null, goo:null};
+     st:'bud', t0:n, born:n, dur:rm?320:1300, th:0, spdK:1, flat:0, tickAt:-1e9, glance:[0,0], blinkAt:n+1500+Math.random()*3000, px:null, py:null, goo:null};
   MINIS.set(m.id,m); miniMake(m);
   if(!rm) G.jelly.kick(.25);                      // he squeezes it out
   return m;
@@ -1338,13 +1338,13 @@ function beadGooSet(on,geo){
     const [x,y,w,h]=geo.lip; beadLip.setAttribute('x',x); beadLip.setAttribute('y',y); beadLip.setAttribute('width',w); beadLip.setAttribute('height',h); }
   else if(beadLip){ beadLip.remove(); beadLip=null; ML.bgoo.removeAttribute('filter'); }
 }
-// the slime between him and a budding / merging helper: a blob and a neck of three drops back to his edge
+// the slime between him and a budding / merging helper: a blob and a neck of five drops back to his edge
 function miniSlime(m,gp){
   if(!gp){ if(m.goo){ m.goo.forEach(c=>c.remove()); m.goo=null; } return false; }
-  if(!m.goo) m.goo=[0,1,2,3].map(()=>sv('circle',{},ML.goo));
+  if(!m.goo) m.goo=[0,1,2,3,4,5].map(()=>sv('circle',{},ML.goo));
   const a=Math.atan2(gp.y,gp.x), ex=Math.cos(a)*74, ey=Math.sin(a)*74;
   m.goo[0].setAttribute('cx',gp.x.toFixed(1)); m.goo[0].setAttribute('cy',gp.y.toFixed(1)); m.goo[0].setAttribute('r',Math.max(0,gp.r).toFixed(2));
-  [.3,.55,.8].forEach((f,i)=>{ const c=m.goo[i+1];
+  [.2,.38,.55,.72,.88].forEach((f,i)=>{ const c=m.goo[i+1];
     c.setAttribute('cx',lerp(ex,gp.x,f).toFixed(1)); c.setAttribute('cy',lerp(ey,gp.y,f).toFixed(1));
     c.setAttribute('r',Math.max(0,gp.neck*(.75+.7*Math.abs(f-.55))).toFixed(2)); });
   return true;
@@ -1352,8 +1352,10 @@ function miniSlime(m,gp){
 function orbDraw(m,ts,dt,p,rm,goo){
   let x,y,z=0,op=1,k=1,gp=null;
   if(rm){ const a=-Math.PI/2+m.slot*.9+.45; x=Math.cos(a)*112; y=Math.sin(a)*112; op=m.st==='bud'?p:m.st==='merge'?1-p:1; }
-  else if(m.st==='bud'){ const e=easeOutC(p), r=lerp(64,m.R,e); x=Math.cos(m.node)*r; y=Math.sin(m.node)*r;
-    op=smooth((p-.22)/.4); gp={x,y,r:MINI_R*(.5+.5*e),neck:MINI_R*.62*(1-smooth((p-.38)/.34))}; }
+  else if(m.st==='bud'){   // swells out through his skin, pulls away on a neck that stretches thin and snaps, settles on its ring
+    const r=p<.4?lerp(50,84,easeIO(p/.4)):p<.82?lerp(84,m.R+12,easeOutC((p-.4)/.42)):lerp(m.R+12,m.R,easeIO((p-.82)/.18));
+    x=Math.cos(m.node)*r; y=Math.sin(m.node)*r; op=smooth((p-.25)/.3);
+    gp={x,y,r:MINI_R*(.45+.55*smooth(p/.45)),neck:MINI_R*(.75-.35*clamp((p-.4)/.4,0,1))*(1-smooth((p-.72)/.12))}; }
   else if(m.st==='merge'){
     if(!m.from){ const [a0,b0,c0]=orbitPos(m,m.th), a=Math.atan2(b0,a0); m.from=[a0,b0,c0,a,Math.max(96,Math.hypot(a0,b0))]; }
     const [a0,b0,c0,a,d]=m.from, ea=easeIO(clamp(p/.35,0,1));
