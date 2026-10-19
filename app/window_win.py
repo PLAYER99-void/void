@@ -196,7 +196,8 @@ class VoidWindow(QWidget):
         page.renderProcessTerminated.connect(lambda *a: (log("page renderer stopped — reloading"),
                                                          QTimer.singleShot(400, v.reload)))
         self.url = url
-        v.load(QUrl(self._authed_url()))
+        lay.activate()                     # (give the view its real size before the page first measures it: else it can
+        v.load(QUrl(self._authed_url()))  #  read Qt's 100x30 placeholder, scale him to a speck and never hear otherwise)
 
         self._load_pos()
         self.show()

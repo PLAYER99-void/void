@@ -2593,6 +2593,8 @@ function fit(){ const k=Math.min(1, innerWidth/340, innerHeight/460); fitK=k>0.9
 // the window widened for a panel: it grew to the left by ox px, so shift the page back and he stays exactly where he was
 window.voidLayout=ox=>{ layoutX=ox|0; fit(); sendRegion(true); requestAnimationFrame(moveInd); };
 addEventListener('resize',()=>{ fit(); sendRegion(true); moveInd(); }); fit();
+// (a resize event can come while the view is still at its startup placeholder size and none after: watch the page too)
+if(window.ResizeObserver) new ResizeObserver(()=>{ fit(); sendRegion(true); moveInd(); }).observe(document.documentElement);
 function sendRegion(force){
   calmCheck();
   if(!NATIVE) return;
