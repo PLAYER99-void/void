@@ -117,7 +117,8 @@ class Ghost(QWidget):
     """The notch left on the wall when he's pulled out of it: it melts back into the screen edge on its own (black,
     shrinking into the edge) while he goes wherever you take him. Click-through, never takes focus, gone in 0.3 s."""
     def __init__(self, x, y, w, h, edge):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowTransparentForInput)
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowTransparentForInput
+                         | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -155,7 +156,8 @@ class Ghost(QWidget):
 
 class VoidWindow(QWidget):
     def __init__(self, url):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)   # Tool: no taskbar button
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool   # Tool: no taskbar button
+                         | Qt.NoDropShadowWindowHint)   # (macOS: its shadow traces a black ring round his glow)
         self.setWindowTitle("Void")
         self.setWindowIcon(QIcon(str(APP / "static" / "icon.png")))
         self.setAttribute(Qt.WA_TranslucentBackground)

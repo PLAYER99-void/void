@@ -1316,7 +1316,7 @@ function miniAdd(ev){
   if(m){ if(ev.type) m.type=ev.type; if(ev.desc) m.desc=ev.desc; return m; }
   const n=performance.now(), rm=RM.matches;
   m={id:ev.id, type:ev.type||'', desc:ev.desc||'', bg:!!ev.bg, waiting:!!ev.waiting, ...miniOrbit(ev.id),
-     st:'bud', t0:n, born:n, dur:rm?320:1700, th:0, spdK:1, flat:0, tickAt:-1e9, glance:[0,0], blinkAt:n+1500+Math.random()*3000, px:null, py:null, goo:null};
+     st:'bud', t0:n, born:n, dur:rm?320:850, th:0, spdK:1, flat:0, tickAt:-1e9, glance:[0,0], blinkAt:n+1500+Math.random()*3000, px:null, py:null, goo:null};
   MINIS.set(m.id,m); miniMake(m);
   if(!rm) G.jelly.kick(.25);                      // he squeezes it out
   hgaze={m, until:n+(rm?700:1100)}; hgazeNext=Math.max(hgazeNext,n+6000+Math.random()*9000);   // ooh, a new one: he looks
@@ -1345,7 +1345,7 @@ function miniBadgeK(m,ts,rm,p){
 }
 function badgeAt(g,x,y,k){ g.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)}) scale(${(k*g._k).toFixed(3)})`); g.setAttribute('opacity',clamp(k,0,1).toFixed(3)); }
 function miniMerge(m,ts){ const rm=RM.matches;
-  m.st='merge'; m.t0=ts; m.from=null; m.dur=rm?(m.status==='done'?300:600):(m.status==='done'?1300:1700);
+  m.st='merge'; m.t0=ts; m.from=null; m.dur=rm?(m.status==='done'?300:600):(m.status==='done'?700:900);
   if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
 function miniGone(m){
   if(m.goo) m.goo.forEach(c=>c.remove());
@@ -1467,7 +1467,7 @@ function miniFrame(ts,dt,dxp){
   for(const m of [...MINIS.values()]){
     if(m.st==='bud'&&ts-m.t0>=m.dur){ m.st='orbit'; m.t0=ts; m.spdK=0; if(m.pend){ m.pend=false; const s=m.status; m.status=null; miniEnd(m,s,ts); } }
     if(m.st==='fail'&&ts-m.t0>=4000) miniMerge(m,ts);
-    if(m.st==='done'&&ts-m.t0>=1000) miniMerge(m,ts);      // (its check shows for a second first)
+    if(m.st==='done'&&ts-m.t0>=700) miniMerge(m,ts);       // (its check shows for a moment first)
     if(m.st==='merge'&&ts-m.t0>=m.dur){ miniGone(m); continue; }
     const p=clamp((ts-m.t0)/m.dur,0,1);
     m.spdK=approach(m.spdK,m.st==='fail'?.2:m.waiting?.35:1,dt,3);
