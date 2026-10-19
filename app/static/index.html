@@ -1247,8 +1247,9 @@ function frame(ts){
   // tears
   if(m==='sad' && ts>tearAt){ tearAt=ts+1900+Math.random()*900; tear(Math.random()<.6?-1:1); }
   if(m==='scared') shakeAmp=Math.max(shakeAmp,.5);
-  E.zz.setAttribute('opacity',m==='sleepy'?(.5+Math.sin(t*1.2)*.5).toFixed(2):'0');
-  E.zz.setAttribute('transform',`translate(0,${(-((t*6)%14)).toFixed(1)})`);
+  const zp=(t/2.4)%1;                                    // (one cycle for both: they rise, fade out, and only then start again)
+  E.zz.setAttribute('opacity',m==='sleepy'?Math.sin(Math.PI*zp).toFixed(3):'0');
+  E.zz.setAttribute('transform',`translate(0,${(-zp*14).toFixed(2)})`);
   if(MINIS.size) miniFrame(ts,dt,dxp);          // his helpers (nothing at all to do while there are none)
   for(let i=parts.length-1;i>=0;i--) if(!parts[i](ts,dt)) parts.splice(i,1);
   capTick(ts);
