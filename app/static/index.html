@@ -1773,11 +1773,17 @@ function stopRec(cancel){ const r=rec; if(!r) return; r.stopping=true; if(cancel
 
 /* ================= caption ================= */
 // Claude tags how it means each sentence ("[proud] Fixed it.") — see VOICE_PROMPT in server.py. The tags drive his face
-// and are never shown or spoken.
+// and are never shown or spoken. A non-English name is marked with its language, "{fr:Les Jardins}" (langmark.py):
+// the server says it in French, we only show the words. Code is left alone, so `{id:5}` stays code.
 const FACE_TAG=/\[(neutral|happy|proud|excited|laugh|warm|curious|unsure|thinking|surprised|sorry|serious)\]\s*/gi;
-const untag=s=>String(s||'').replace(FACE_TAG,'');
+const MARK=/(```[\s\S]*?```|`[^`\n]*`)|\{([a-z]{2}(?:-[a-z]{2})?):([^{}\n]+)(?:\}|$)/gi, OPEN_MARK=/\{[a-z]{2}(?:-[a-z]{2})?:[^{}\n]*$/i;
+const unmark=s=>String(s||'').replace(MARK,(m,code,lang,w)=>code||w);
+const unface=s=>String(s||'').replace(FACE_TAG,'');       // (what's spoken: the {fr:…} marks stay)
+const untag=s=>unmark(unface(s));                         // what's shown
+const whole=m=>!m||!OPEN_MARK.test(m[0])?m:m[0].slice(0,m[0].search(OPEN_MARK)).match(/^[\s\S]*[.!?:](?=\s)/);   // never cut a {fr:…} in two
+const sentences=raw=>(raw.match(/[^.!?]+(?:[.!?]+|$)\s*/g)||[raw]).reduce((a,s)=>{ if(a.length&&OPEN_MARK.test(a[a.length-1])) a[a.length-1]+=s; else a.push(s); return a; },[]);
 function karaParse(text){ const ws=[], faces=[]; let pend=null, tagged=false;
-  for(const tok of plain(String(text||'')).replace(FACE_TAG,m=>' '+m.trim()+' ').split(/\s+/)){
+  for(const tok of unmark(plain(String(text||''))).replace(FACE_TAG,m=>' '+m.trim()+' ').split(/\s+/)){
     if(!tok) continue; const m=tok.match(/^\[(neutral|happy|proud|excited|laugh|warm|curious|unsure|thinking|surprised|sorry|serious)\]$/i);
     if(m){ pend=m[1].toLowerCase(); tagged=true; continue; }
     ws.push(tok); faces.push(pend); pend=null; }
@@ -1962,7 +1968,7 @@ async function send(text,opts={}){
   const kv=voiced(); let fresh=true;        // kv: the caption follows his voice instead of racing ahead of it
   let buf='', spoken=0, all='', failed=false, stopped=false, ignored=false, tools=0; const t0=performance.now();
   const flush=end=>{ const rest=buf.slice(spoken); if((buf.match(/```/g)||[]).length%2 && !end) return;
-    const m2=end?[rest]:(rest.match(/^[\s\S]*[.!?:](?=\s)/)||(spoken===0?rest.match(/^[\s\S]{70,}?[,;—–](?=\s)/):null)); if(m2&&m2[0].trim()){ const raw=plain(m2[0]); if(kv){ enqueue(untag(raw),{cap:raw,fresh}); fresh=false; } else enqueue(untag(raw)); spoken+=m2[0].length; } };
+    const m2=end?[rest]:whole(rest.match(/^[\s\S]*[.!?:](?=\s)/)||(spoken===0?rest.match(/^[\s\S]{70,}?[,;—–](?=\s)/):null)); if(m2&&m2[0].trim()){ const raw=plain(m2[0]); if(kv){ enqueue(unface(raw),{cap:raw,fresh}); fresh=false; } else enqueue(unface(raw)); spoken+=m2[0].length; } };
   const handle=ev=>{ switch(ev.t){
     case 'break': flush(true); if(buf.trim()) fresh=true; buf=''; spoken=0; break;
     case 'delta': CP.answer(); toolMood=null; workWhat='answering'; buf+=ev.text; all+=ev.text; if(!kv) showHim(buf); flush(false); break;
@@ -2014,8 +2020,8 @@ function followTry(){
   if(busy||playing||rec||transcribing||follow||pendingAppr||pwReq||q.length||spkMap.size||typing){ followT=setTimeout(followTry,400); return; }
   const f=followQ.shift(), raw=plain(f.text||'').trim();
   if(raw){ followCur=f; wake(); capShow(); setYou(''); himSet(''); sfx('remind');
-    if(voiced()){ let fresh=true; for(const s of raw.match(/[^.!?]+(?:[.!?]+|$)\s*/g)||[raw]) if(s.trim()){ enqueue(untag(s),{cap:s,fresh}); fresh=false; } }
-    else { himSet(untag(raw)); enqueue(untag(raw)); }
+    if(voiced()){ let fresh=true; for(const s of sentences(raw)) if(s.trim()){ enqueue(unface(s),{cap:s,fresh}); fresh=false; } }
+    else { himSet(untag(raw)); enqueue(unface(raw)); }
     capQuiet(); lastAnswer=untag(f.text).trim(); moreEl.classList.toggle('on',lastAnswer.length>220||/```/.test(lastAnswer));
     whenQuiet(()=>{ if(followCur!==f) return; followCur=null; poke(f.ok===false?'sad':'happy',1500); }); }
   if(followQ.length) followT=setTimeout(followTry,600);

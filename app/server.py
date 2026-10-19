@@ -35,6 +35,7 @@ APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 import quick  # noqa: E402
 import agents  # noqa: E402
+import langmark  # noqa: E402
 WIN = os.name == "nt"                        # Windows: OS bits go through winsys.py instead of Linux command-line tools
 if WIN:
     import winsys  # noqa: E402
@@ -82,14 +83,19 @@ VOICE_PROMPT = (
     "saying how you mean it, so the face matches your words: [neutral] [happy] [proud] [excited] [laugh] [warm] "
     "[curious] [unsure] [thinking] [surprised] [sorry] [serious]. Example: \"[proud] Fixed it, all nine tests pass now. "
     "[curious] Want me to commit it?\" You can switch tags mid-sentence if your feeling changes. Never put these tags in "
-    "files, code, commands or tool input — only in the words you say to the user."
+    "files, code, commands or tool input — only in the words you say to the user. "
+    "To have non-English names and titles pronounced right, mark them in your spoken reply with their language code in "
+    "curly braces, e.g. {fr:Les Jardins de Minuit} or {ja:Sen to Chihiro} (fr, es, de, it, pt, ja in rōmaji, nl, sv, "
+    "pl); Void says them in that language and shows just the words. Never put these marks in files, code, commands or "
+    "tool input."
 )
-# the face tags Claude puts in its replies (see VOICE_PROMPT) — never spoken, never shown, never saved
+# the face tags Claude puts in its replies (see VOICE_PROMPT) — never spoken, never shown, never saved. Its {fr:…}
+# marks (langmark.py) are spoken (by Kokoro), never shown or saved.
 FACE_TAG_RE = re.compile(r"\[(?:neutral|happy|proud|excited|laugh|warm|curious|unsure|thinking|surprised|sorry|serious)\]\s*", re.I)
 
 
 def untag(t):
-    return FACE_TAG_RE.sub("", t or "")
+    return langmark.unmark(FACE_TAG_RE.sub("", t or ""))
 
 DEFAULTS = {
     "port": 47777,
@@ -1557,9 +1563,9 @@ def say_path(p):
 
 
 def speakable(t: str) -> str:
-    t = untag(t)
+    t = FACE_TAG_RE.sub("", t or "")                 # (the {fr:…} marks stay, for synth())
     t = re.sub(r"```.*?```", " I put some code on screen. ", t, flags=re.S)
-    t = re.sub(r"`([^`]*)`", r"\1", t)
+    t = re.sub(r"`([^`]*)`", lambda m: m.group(1).replace("{", " ").replace("}", " "), t)   # code is never a {fr:…}
     t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
     t = re.sub(r"https?://\S+", "a link", t)
     t = PATH_RE.sub(lambda m: say_path(m.group(0).rstrip(".")) + "." * (len(m.group(0)) - len(m.group(0).rstrip("."))), t)
@@ -1629,7 +1635,13 @@ def kokoro_synth(text, voice, speed):
         if k is None:
             k = _KOKORO["k"] = Kokoro(str(KOKORO_DIR / "kokoro-v1.0.int8.onnx"), str(KOKORO_DIR / "voices-v1.0.bin"))
         lang = "en-gb" if voice[:1] == "b" else "en-us"
-        samples, sr = k.create(text, voice=voice, speed=max(0.5, min(2.0, speed)), lang=lang)
+        speed, out = max(0.5, min(2.0, speed)), None
+        try:                     # {fr:…} words in their own language's phonemes, the rest in English: one call, one voice
+            ph = langmark.phonemes(text, k.tokenizer.phonemize, lang)
+            out = ph and k.create(ph, voice=voice, speed=speed, is_phonemes=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[void] foreign words: {e}", file=sys.stderr)
+        samples, sr = out or k.create(langmark.unmark(text), voice=voice, speed=speed, lang=lang)
     import numpy as np
     pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
     buf = io.BytesIO()
@@ -1949,7 +1961,7 @@ class Speaker:
                     continue
                 t = time.monotonic()
                 wav, rate = synth(text)
-                wav, times, level = tidy_full(wav, text)
+                wav, times, level = tidy_full(wav, langmark.unmark(text))
                 with wave.open(io.BytesIO(wav)) as w:
                     sr, pcm = w.getframerate(), w.readframes(w.getnframes())
                 took = time.monotonic() - t
@@ -2055,7 +2067,7 @@ class Speaker:
                     level=level, step=lstep)
             if not cls._write(pcm, g):
                 continue
-            pause = 0.3 if re.search(r"[.!?]['\")]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
+            pause = 0.3 if re.search(r"[.!?]['\")}]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
             cls._write(b"\0\0" * int(prate * pause), g)
 
 
@@ -2151,6 +2163,7 @@ def synth(text: str):
         return kokoro_synth(text, CFG.get("kokoro_voice") or vp["kokoro"], 1.0 / kp), kp
     if eng == "kokoro":                                       # (the robot preset is espeak on purpose)
         eng = "piper" if piper_bin() and piper_voice() else "espeak"
+    text = langmark.unmark(text)                              # piper and espeak just say the words
     pitch = float(vp.get("pitch", 1.0))
     fd, out = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
@@ -2863,8 +2876,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     return None
                 audio, rate = synth(text)
-                audio, words = tidy_and_time(audio, text)
-                pause = 0.3 if re.search(r"[.!?]['\")]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
+                audio, words = tidy_and_time(audio, langmark.unmark(text))
+                pause = 0.3 if re.search(r"[.!?]['\")}]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/wav")
                 self.send_header("X-Void-Rate", f"{rate:.3f}")
