@@ -429,7 +429,7 @@ class LongLived(unittest.TestCase):
         self.assertEqual(len(h.procs), 1)
         h.ask("y", perm=("trust", "/x"))                       # what he may do: at once, even if it stops it
         self.assertEqual(len(h.procs), 2)
-        self.assertIn(h.procs[0], h.killed)
+        self.assertTrue(wait_for(lambda: h.procs[0] in h.killed))   # (killed on its own thread)
         self.assertEqual(h.bus("sub_end"), [{"t": "sub_end", "id": "t1", "status": "stopped"}])
         h.ask("z", perm=("trust", "/x"), sig=("p3",))          # idle now: other settings restart too
         self.assertEqual(len(h.procs), 3)
@@ -490,7 +490,7 @@ class LongLived(unittest.TestCase):
         r, got = res["r"]
         self.assertEqual(got[-1], {"t": "stopped"})
         self.assertIn({"subtype": "interrupt"}, h.procs[0].controls())
-        self.assertIn(h.procs[0], h.killed)
+        self.assertTrue(wait_for(lambda: h.procs[0] in h.killed))   # (killed on its own thread, after "stopped")
         self.assertEqual(h.bus("sub_end")[0]["status"], "stopped")
 
     def test_shutdown_stops_everything(self):
@@ -534,10 +534,15 @@ class LongLived(unittest.TestCase):
 @unittest.skipIf(os.name == "nt", "process groups are POSIX")
 class GroupKill(unittest.TestCase):
     def _gone(self, pgid):
+        """Nothing in the group runs any more. (macOS answers EPERM, not ESRCH, for a group left with only zombies: the
+        orphan, killed, waits a few ms for launchd to reap it.)"""
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
             return True
+        except PermissionError:
+            ps = subprocess.run(["ps", "-axo", "pgid=,stat="], capture_output=True, text=True).stdout.split()
+            return not any(g == str(pgid) and not st.startswith("Z") for g, st in zip(ps[::2], ps[1::2]))
         return False
 
     def test_kills_the_whole_group(self):

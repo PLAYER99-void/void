@@ -3,6 +3,8 @@ sounddevice (no real audio, nothing audible).
 
     python3 -m unittest discover -s tests
 """
+import json
+import subprocess
 import sys
 import types
 import unittest
@@ -64,19 +66,23 @@ class FakeSD(types.ModuleType):
     def __init__(self):
         super().__init__("sounddevice")
         self.system = {"out": "DAC", "in": "Built-in Mic", "devs": ["DAC", "Built-in Mic", "Speakers"]}
-        self.inits = self.terms = self.fail = 0
+        self.inits = self.terms = self.fail = self._initialized = 0
         self.silent = False
         self.open, self.made, self.bad = [], [], []
         self._initialize()                                 # (as sounddevice does when it's imported)
 
     def _initialize(self):
         self.inits += 1
+        self._initialized += 1
         self.seen = {"out": self.system["out"], "in": self.system["in"], "devs": list(self.system["devs"])}
 
     def _terminate(self):
+        if not self._initialized:
+            raise self.PortAudioError("PortAudio not initialized")
         if self.open:
             self.bad.append([s.device for s in self.open])  # a restart with a stream open
         self.terms += 1
+        self._initialized -= 1
 
     def _dev(self, name):
         mic = "Mic" in name
@@ -110,7 +116,8 @@ class Base(unittest.TestCase):
         sys.modules["sounddevice"] = self.sd
         self._first, winsys.FIRST = winsys.FIRST, 0.05
         winsys._PA.live.clear()
-        winsys._PA.sig, winsys._PA.stale = None, False
+        winsys._PA.sig, winsys._PA.stale, winsys._PA.done = None, False, False
+        winsys._PA.hooked = True                           # (not at this process's exit: Quitting does that)
         s = self.sd.system
         winsys.devices = (lambda: (s["out"], s["in"], tuple(s["devs"]))) if self.mac else None
 
@@ -270,6 +277,67 @@ class MacLike(Base):
         self.assertIsNone(p.poll())
         winsys.Player(22050)
         self.assertEqual(self.sd.terms, 1)
+
+
+class Stopping(Base):
+    def test_stop_closes_everything_and_nothing_opens_again(self):
+        wake, p = winsys.Mic(16000), winsys.Player(22050)
+        winsys.stop()
+        self.assertEqual((self.sd.open, self.sd._initialized), ([], 0))
+        self.assertEqual(p.poll(), 0)
+        with self.assertRaises(EOFError):
+            wake.read(0.01)
+        with self.assertRaises(FakeSD.PortAudioError):     # (the wake word's next try: an error, not a new mic)
+            winsys.Mic(16000)
+        self.assertEqual((winsys.list_mics(), winsys.can_play()), ([], False))
+        self.assertEqual((self.sd.inits, self.sd._initialized), (1, 0))
+
+
+# the wake word keeps a mic open and opens a new one whenever it ends; then Python exits with it still going
+QUIT = """
+import atexit, json, sys, threading, time
+sys.path[:0] = sys.argv[1:3]
+from test_audio_devices import FakeSD
+import winsys
+sd = sys.modules["sounddevice"] = FakeSD()
+winsys.FIRST = 0.05
+
+def last():                                        # (registered first, runs last: after any thread had its go)
+    time.sleep(0.3)
+    print(json.dumps({"open": len(sd.open), "running": sd._initialized, "bad": sd.bad}), flush=True)
+
+def sounddevice_exit():                            # (what sounddevice registers when it's imported)
+    for s in list(sd.open):
+        s.stop(); s.close()
+    while sd._initialized:
+        sd._terminate()
+
+def wake():
+    while True:
+        try:
+            m = winsys.Mic(16000)
+            while True:
+                m.read(0.01)
+                sd.made[-1].tick()
+        except Exception:
+            time.sleep(0.01)
+
+atexit.register(last)
+atexit.register(sounddevice_exit)
+threading.Thread(target=wake, daemon=True).start()
+while not winsys._PA.live:
+    time.sleep(0.01)
+"""
+
+
+class Quitting(unittest.TestCase):
+    def test_no_stream_or_portaudio_left_running_at_exit(self):
+        """At exit no callback may come in after Python has started tearing itself down (macOS: 'Python quit
+        unexpectedly', in _os_workgroup_tsd_cleanup): every stream is closed and PortAudio stays stopped."""
+        r = subprocess.run([sys.executable, "-c", QUIT, str(HERE), str(HERE.parent / "app")],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout.splitlines()[-1]), {"open": 0, "running": 0, "bad": []})
 
 
 @unittest.skipUnless(sys.platform == "darwin", "Core Audio")

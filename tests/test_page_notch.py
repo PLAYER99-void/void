@@ -6,6 +6,7 @@ notch takes over again. The real page in Qt's web view, offscreen: no window on 
 """
 import json
 import os
+import subprocess
 import sys
 import time
 import unittest
@@ -43,11 +44,25 @@ class NotchShift(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        page = cls.view.page()
+        # the page and the view really gone while the app is still alive: one left for the app's own end is torn down
+        # with the default profile, after Qt Quick, and crashes on exit (macOS: "Python quit unexpectedly")
+        page, gone = cls.view.page(), []
+        page.destroyed.connect(lambda: gone.append("page"))
+        cls.view.destroyed.connect(lambda: gone.append("view"))
         cls.view.close()
         page.deleteLater()                                               # (the page before the profile it uses)
         cls.view.deleteLater()
-        cls.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        end = time.monotonic() + 5
+        while len(gone) < 2 and time.monotonic() < end:
+            cls.app.sendPostedEvents(None, QEvent.DeferredDelete)
+            cls.app.processEvents()
+            time.sleep(0.01)
+        for _ in range(10):                                              # (and what deleting them left to delete)
+            cls.app.sendPostedEvents(None, QEvent.DeferredDelete)
+            cls.app.processEvents()
+            time.sleep(0.01)
+        cls.view = None
+        assert len(gone) == 2, f"only {gone} gone: the web view outlived the test"
 
     @classmethod
     def js(cls, code, timeout=5.0):
@@ -95,6 +110,17 @@ class NotchShift(unittest.TestCase):
             self.assertAlmostEqual(seen[0][1], before[1], delta=2)
             self.assertAlmostEqual(seen[-1][1], after[1], delta=1)
             self.assertLessEqual(seen[-1][0], after[0] + 1)              # (and hangs from at least as high)
+
+
+@unittest.skipUnless(QWebEngineView and sys.platform == "darwin", "macOS with PySide6's web view only")
+class CleanExit(unittest.TestCase):
+    def test_passes_and_then_exits_cleanly(self):
+        """The web view's test on its own, in a fresh Python: it passes and then exits without crashing (a crash on the
+        way out leaves a report and puts 'Python quit unexpectedly' on screen, after the test said OK)."""
+        r = subprocess.run([sys.executable, "-m", "unittest", "test_page_notch.NotchShift"], cwd=Path(__file__).parent,
+                           capture_output=True, text=True, timeout=60)
+        self.assertIn("OK", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr[-500:])               # (a crash: -11, SIGSEGV)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ clipboard, notifications, volume / media keys / brightness, opening apps, lockin
 On Linux, server.py and quick.py use command-line tools for these (parecord, paplay, grim, wl-paste, pactl, …);
 everything else in Void is the same on both.
 """
+import atexit
 import ctypes
 import json
 import os
@@ -72,6 +73,25 @@ class _PA:
     live = set()                    # the Players and Mics open now
     sig = None                      # devices() when PortAudio last started
     stale = False                   # a stream died or never ran: start over before the next one opens
+    done = False                    # Void is quitting: PortAudio has stopped for good, nothing opens again
+    hooked = False                  # stop() is registered to run at exit
+
+
+def stop():
+    """Void is quitting: close every stream and stop PortAudio, for good. Runs at exit ahead of sounddevice's own
+    clean-up — otherwise the wake word sees its mic die under that, opens a new one on a PortAudio started over, and its
+    callback then comes in while Python is tearing itself down: it can't get Python back, and macOS reports a crash."""
+    import sys
+    with _PA.lock:
+        _PA.done = True
+        for s in list(_PA.live):
+            s.kill()
+        sd = sys.modules.get("sounddevice")
+        try:
+            while sd is not None and sd._initialized > 0:
+                sd._terminate()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _sig():
@@ -85,6 +105,11 @@ def _fresh(sd, close=True, force=False):
     """Start PortAudio over if it's out of date. Anything still open is closed first (its owner sees it end and opens
     a new one, on the new list) — or, close=False, left alone and PortAudio left as it is for now."""
     with _PA.lock:
+        if _PA.done:
+            raise sd.PortAudioError("PortAudio has stopped: Void is quitting")
+        if not _PA.hooked:                                 # (sounddevice is imported by now, its clean-up registered:
+            _PA.hooked = True                              # this one, registered after, runs before it)
+            atexit.register(stop)
         sig = _sig()
         if not (force or _PA.stale or (sig is not None and sig != _PA.sig)) or (_PA.live and not close):
             return
