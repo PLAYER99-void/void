@@ -410,6 +410,18 @@ class BarInset(unittest.TestCase):
         self.ticks(window_win.MENU_STEADY)
         self.assertEqual(self.js[n + 1:], ["window.voidBarInset&&voidBarInset(0,true)"])
 
+    def test_the_window_stays_put_while_he_drips_and_is_slurped(self):
+        self.full_screen_top()
+        g = self.win.geometry()
+        seen = set()
+        for top in (30, 0):                                              # it slides down, then back up
+            self.insets["top"] = top
+            self.ticks(window_win.MENU_STEADY)
+            for _ in range(40):                                          # (as long as the page's ooze takes, and more)
+                self.settle(0.02)
+                seen.add(self.win.geometry().getRect())
+        self.assertEqual(seen, {g.getRect()})                            # only the page moves: never the window
+
     def test_a_flick_past_the_edge_doesnt_bob_him(self):
         n = self.full_screen_top()
         self.assertGreaterEqual(window_win.MENU_STEADY * window_win.MENU_LOOK, 300)   # (a flick: under ~0.3 s)

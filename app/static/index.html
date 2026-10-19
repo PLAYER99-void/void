@@ -2351,7 +2351,7 @@ function barShift(to){
   $$('.gooN').forEach(el=>el.setAttribute('r',0));
   // u: page px in from the screen's edge, a: along it → x, y on the page (which itself sits barIn in)
   const pt2=(u,a)=>{ u-=barIn/k; return edge==='top'?[a,u]:edge==='bottom'?[a,460-u]:edge==='left'?[u,a]:[340-u,a]; };
-  const f=v=>Math.max(0,v).toFixed(1);
+  const f=v=>Math.max(0,v).toFixed(1), at=v=>v.toFixed(1);    // (sizes can't go below 0; places can: past the page's top)
   meltDone=instant=>{ shifting=false; barInSet(to); b.classList.remove('goohide'); sendRegion(true);
     const end=()=>b.classList.remove('gooing'); if(instant) end(); else morphT=setTimeout(end,110); };
   b.classList.add('gooing','goohide');
@@ -2373,7 +2373,7 @@ function barShift(to){
     const bot=cur+D;
     sp=S*(1-.12*clamp((bot-(top+o)-D)/Math.max(1,Math.abs(pd)),0,1));   // drawn long, it's thinner
     const [x0,y0]=pt2(top,c-sp/2), [x1,y1]=pt2(bot,c+sp/2);
-    bar.setAttribute('x',f(Math.min(x0,x1))); bar.setAttribute('y',f(Math.min(y0,y1)));
+    bar.setAttribute('x',at(Math.min(x0,x1))); bar.setAttribute('y',at(Math.min(y0,y1)));
     bar.setAttribute('width',f(Math.abs(x1-x0))); bar.setAttribute('height',f(Math.abs(y1-y0)));
     const [dx,dy]=pt2(bot+dr*.35,c); drop.setAttribute('cx',dx.toFixed(1)); drop.setAttribute('cy',dy.toFixed(1)); drop.setAttribute('r',f(dr));
     if(tg){ const [ex,ey]=pt2((tg[0]+tg[1])/2,c), len=Math.max(0,(tg[1]-tg[0])/2);
