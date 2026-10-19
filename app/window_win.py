@@ -44,6 +44,10 @@ WIDE = 470                   # while settings / history / memory are open the wi
 CODE_SIDE = 100              # room either side for his terminal
 BAR_SIDE = 70                # docked at the top / bottom: room either side of the notch, so his glow fades out in it
 GLIDE = 0.26                 # seconds the window takes to glide into the notch and back (quick: it should feel snappy)
+MENU_LOOK = 150              # ms between looks for a full-screen app's menu bar sliding down over the notch (macOS)
+MENU_STEADY = 3              # looks in a row that must agree before he moves (a flick past the edge mustn't bob him)
+MENU_NEAR = 3.0              # s the looks stay quick after the mouse was last up by the top edge; after that, one…
+MENU_SLOW = 2.0              # …every this many s (it can stay down with the mouse away: a menu opened from it)
 BALL = (170, 165)            # where the ball's centre sits inside the window
 DATA = winsys.data_dir()
 POS_FILE, PORT_FILE = DATA / "pos.json", DATA / "window.port"
@@ -362,6 +366,39 @@ class VoidWindow(QWidget):
             log("no screen notifications — checking the menu bar and the Dock every 2 s instead")
             self.scr_poll = QTimer(self, interval=2000, timeout=self._screens_changed)
             self.scr_poll.start()
+        self.menu_t = QTimer(self, interval=MENU_LOOK, timeout=self._menu_tick)
+        self.menu_room, self.menu_want, self.menu_n, self.menu_near, self.menu_look = 0, 0, 0, 0.0, 0.0
+
+    def _watch_menu(self, ins):
+        """Docked at the top of a screen with a menu bar: over a full-screen app it slides down over him when the
+        mouse reaches the top edge (and back up when it leaves), and nothing says so — no Space or screen change.
+        So look (_menu_tick) while he's up there."""
+        if self.bar == "top" and ins.get("menu", 0) > 0:
+            self.menu_room, self.menu_want, self.menu_n = ins["menu"], ins["top"], MENU_STEADY
+            self.menu_look = time.monotonic()
+            self.menu_t.start()
+        else:
+            self.menu_t.stop()
+
+    def _menu_tick(self):
+        """Is the menu bar down over him? Looked at every MENU_LOOK ms while the mouse is (or just was) up by the top
+        edge, the only thing that brings it down, else every MENU_SLOW s (a look is ~1 ms). Once MENU_STEADY looks
+        agree he drips down under it, or is slurped back up when it's gone."""
+        if self.bar != "top" or self.hover:
+            self.menu_t.stop()
+            return
+        scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
+        g, c, now = scr.geometry(), QCursor.pos(), time.monotonic()
+        if g.left() <= c.x() <= g.right() and g.top() <= c.y() < g.top() + self.menu_room + 8:
+            self.menu_near = now
+        if now - self.menu_near > MENU_NEAR and self.menu_n >= MENU_STEADY and now - self.menu_look < MENU_SLOW:
+            return
+        self.menu_look = now
+        want = self._bar_area(scr)[1]["top"]
+        self.menu_n = self.menu_n + 1 if want == self.menu_want else 1
+        self.menu_want = want
+        if self.menu_n >= MENU_STEADY:
+            self._set_inset(want, glide=True)
 
     def _screens_changed(self):
         if not self.bar or self.hover:
@@ -372,6 +409,7 @@ class VoidWindow(QWidget):
         if (x, y) != (self.x() + self.wide_shift, self.y()):            # (the screen itself changed)
             self._glide_to(x, y)
         self._set_inset(ins[self.bar], glide=True)
+        self._watch_menu(ins)
 
     def _ghost_rect(self):
         """The notch as it is on the wall (where it melts away when he's pulled out of it)."""
@@ -391,6 +429,8 @@ class VoidWindow(QWidget):
             g, ins = self._bar_area(scr)                                 # (the bottom edge sits above the taskbar)
             x, y = self._bar_xy(edge, g)
             self._set_inset(ins[edge], glide=False)                      # (the page eases there as he docks)
+            if MAC:
+                self._watch_menu(ins)
             # glide into place while the page morphs, growing the window round the notch for its glow on the way
             # (no growing the window round the notch: it flickered; the notch's glow is sized to fit the window)
             self._glide_to(x, y)

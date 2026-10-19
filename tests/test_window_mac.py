@@ -17,6 +17,7 @@ if MAC:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     import macsys  # noqa: E402
     try:
+        from PySide6.QtCore import QPoint  # noqa: E402
         from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
         import window_win  # noqa: E402
     except ImportError:
@@ -152,11 +153,11 @@ class EdgeInsets(unittest.TestCase):
 
     def test_menu_bar_and_dock_there(self):
         self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 92, 3840, 2038), 0.0)], 0, 0, 3840, 2160),
-                         {"top": 30, "bottom": 92, "left": 0, "right": 0})
+                         {"top": 30, "bottom": 92, "left": 0, "right": 0, "menu": 30})
 
     def test_full_screen_app_flush(self):
         self.assertEqual(macsys.edge_insets([(self.MAIN, self.MAIN, 0.0)], 0, 0, 3840, 2160),
-                         {"top": 0, "bottom": 0, "left": 0, "right": 0})
+                         {"top": 0, "bottom": 0, "left": 0, "right": 0, "menu": 0})
 
     def test_dock_hiding_itself_is_no_dock(self):
         self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 4, 3840, 2126), 0.0)], 0, 0, 3840, 2160)["bottom"], 0)
@@ -187,15 +188,16 @@ class EdgeInsets(unittest.TestCase):
 
     def test_full_screen_space_flush_though_visible_frame_keeps_room(self):
         self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 92, 3840, 2038), 0.0)], 0, 0, 3840, 2160, []),
-                         {"top": 0, "bottom": 0, "left": 0, "right": 0})
+                         {"top": 0, "bottom": 0, "left": 0, "right": 0, "menu": 30})
 
     def test_desktop_space_under_the_menu_bar_and_beside_the_dock(self):
         self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 92, 3840, 2038), 0.0)], 0, 0, 3840, 2160, self.DESKTOP),
-                         {"top": 30, "bottom": 92, "left": 0, "right": 0})
+                         {"top": 30, "bottom": 92, "left": 0, "right": 0, "menu": 30})
 
     def test_menu_bar_auto_hidden_dock_still_there(self):
         self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 92, 3840, 2038), 0.0)], 0, 0, 3840, 2160,
-                                            self.DESKTOP[1:]), {"top": 0, "bottom": 92, "left": 0, "right": 0})
+                                            self.DESKTOP[1:]),
+                         {"top": 0, "bottom": 92, "left": 0, "right": 0, "menu": 30})
 
     def test_bars_on_another_screen_dont_count(self):
         upper = ((-500, 2160, 1920, 1080), (-500, 2160, 1920, 1055), 0.0)
@@ -289,13 +291,19 @@ class BarInset(unittest.TestCase):
     def setUp(self):
         test = self
         self.insets = {"top": 30, "bottom": 92, "left": 0, "right": 0}
-        self.watching = []
+        self.watching, self.looks = [], 0
+
+        def look(x, y, w, h):
+            test.looks += 1
+            return dict(test.insets)
         fake = type("Cocoa", (), {"keep_on_all_spaces": staticmethod(lambda w: None), "no_resize": staticmethod(lambda w: None),
                                   "unconstrained": staticmethod(lambda w: None),
-                                  "edge_insets_now": staticmethod(lambda x, y, w, h: dict(test.insets)),
+                                  "edge_insets_now": staticmethod(look),
                                   "watch_screens": staticmethod(lambda cb: test.watching.append(cb) or True)})
-        self.saved = window_win.winsys
+        self.saved = window_win.winsys, window_win.QCursor
         window_win.winsys = fake
+        self.mouse = (0, 900)
+        window_win.QCursor = type("Cursor", (), {"pos": staticmethod(lambda: QPoint(*test.mouse))})
         js = self.js = []
 
         class Win(window_win.VoidWindow):
@@ -321,7 +329,7 @@ class BarInset(unittest.TestCase):
         self.win.close()
         self.win.deleteLater()
         self.settle()
-        window_win.winsys = self.saved
+        window_win.winsys, window_win.QCursor = self.saved
 
     def settle(self, s=0.0):
         import time
@@ -375,6 +383,73 @@ class BarInset(unittest.TestCase):
         self.watching[0]()
         self.settle(0.05)
         self.assertEqual(self.js[n:], [])
+
+    # over a full-screen app: the menu bar keeps its room but isn't there, and slides down when the mouse reaches the top
+    def full_screen_top(self):
+        self.insets.update(top=0, bottom=0, menu=30)
+        self.dock("top")
+        self.assertTrue(self.win.menu_t.isActive())
+        self.win.menu_t.stop()                                           # (the test does the looking, one by one)
+        self.mouse = (self.scr.center().x() + 400, self.scr.top() + 1)   # (up by the edge, off the notch)
+        return len(self.js)
+
+    def ticks(self, n):
+        for _ in range(n):
+            self.win._menu_tick()
+
+    def test_full_screen_menu_bar_slides_down_and_he_drips_under_it_then_back_up(self):
+        n = self.full_screen_top()
+        self.assertEqual(self.win.bar_inset, 0)
+        self.insets["top"] = 30                                          # it slid down
+        self.ticks(window_win.MENU_STEADY - 1)
+        self.assertEqual(self.js[n:], [])                                # (not yet: it might be a flick)
+        self.ticks(1)
+        self.assertEqual(self.js[n:], ["window.voidBarInset&&voidBarInset(30,true)"])
+        self.mouse = (self.scr.center().x(), self.scr.top() + 300)       # the mouse leaves, it slides back up
+        self.insets["top"] = 0
+        self.ticks(window_win.MENU_STEADY)
+        self.assertEqual(self.js[n + 1:], ["window.voidBarInset&&voidBarInset(0,true)"])
+
+    def test_a_flick_past_the_edge_doesnt_bob_him(self):
+        n = self.full_screen_top()
+        self.assertGreaterEqual(window_win.MENU_STEADY * window_win.MENU_LOOK, 300)   # (a flick: under ~0.3 s)
+        self.insets["top"] = 30
+        self.ticks(window_win.MENU_STEADY - 1)
+        self.insets["top"] = 0
+        self.ticks(window_win.MENU_STEADY + 2)
+        self.assertEqual(self.js[n:], [])
+
+    def test_mouse_away_from_the_top_hardly_a_look(self):
+        self.full_screen_top()
+        self.mouse = (self.scr.center().x(), self.scr.top() + 300)
+        self.win.menu_near, looks = 0.0, self.looks
+        self.ticks(10)
+        self.assertEqual(self.looks, looks)                              # (nothing brings it down: no looks)
+        self.win.menu_look -= window_win.MENU_SLOW                       # …but now and then one (a menu opened off it)
+        self.ticks(10)
+        self.assertEqual(self.looks, looks + 1)
+
+    def test_mouse_up_at_the_top_of_another_screen_isnt_up_at_this_one(self):
+        self.full_screen_top()
+        self.mouse = (self.scr.right() + 500, self.scr.top() + 1)
+        self.win.menu_near, looks = 0.0, self.looks
+        self.ticks(5)
+        self.assertEqual(self.looks, looks)
+
+    def test_no_watch_off_the_top_or_without_a_menu_bar(self):
+        self.insets.update(top=0, bottom=0, menu=30)
+        self.dock("bottom")
+        self.assertFalse(self.win.menu_t.isActive())
+        self.insets.update(menu=0)                                       # (other platforms: no menu bar at all)
+        self.dock("top")
+        self.assertFalse(self.win.menu_t.isActive())
+
+    def test_undocked_the_watch_stops(self):
+        self.full_screen_top()
+        self.win.menu_t.start()
+        self.win.set_bar(None, glide=False)
+        self.win._menu_tick()
+        self.assertFalse(self.win.menu_t.isActive())
 
     def test_the_notch_left_on_the_wall_is_where_it_hung(self):
         self.dock("top")

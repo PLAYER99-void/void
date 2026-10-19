@@ -401,10 +401,11 @@ def _bars():
 
 def edge_insets(screens, x, y, w, h, bars=None):
     """How far in from each edge of the screen whose whole frame is Qt's (x, y, w, h) (points, y down from the top of
-    the main screen) the menu bar, the Dock and a camera housing reach → {"top", "bottom", "left", "right"}, or None
-    when no screen has that frame. bars (from _bars()): the menu bar only counts while one is on screen at this
-    screen's top, the Dock only while its window is on this screen (visibleFrame keeps both over a full-screen app);
-    None → visibleFrame alone. A notch never hangs behind the camera, even where there's no menu bar."""
+    the main screen) the menu bar, the Dock and a camera housing reach → {"top", "bottom", "left", "right"}, plus
+    "menu": the room the menu bar takes when it's there (it may slide down over a full-screen app), or None when no
+    screen has that frame. bars (from _bars()): the menu bar only counts while one is on screen at this screen's top,
+    the Dock only while its window is on this screen (visibleFrame keeps both over a full-screen app); None →
+    visibleFrame alone. A notch never hangs behind the camera, even where there's no menu bar."""
     if not screens:
         return None
     top0 = screens[0][0][1] + screens[0][0][3]                            # (the main screen's top: Qt's y = 0)
@@ -417,8 +418,9 @@ def edge_insets(screens, x, y, w, h, bars=None):
             menu = any(k == "menu" and abs(r[1] - y) < 1 and on(*r) for k, r in bars)
             has_dock = any(k == "dock" and on(*r) for k, r in bars)
         dock = lambda d: 0 if not has_dock or d < DOCK_HIDDEN else round(d)   # noqa: E731
-        return {"top": round(max(fy + fh - vy - vh if menu else 0, safe)), "bottom": dock(vy - fy),
-                "left": dock(vx - fx), "right": dock(fx + fw - vx - vw)}
+        room = round(max(fy + fh - vy - vh, 0))
+        return {"top": round(max(room if menu else 0, safe)), "bottom": dock(vy - fy),
+                "left": dock(vx - fx), "right": dock(fx + fw - vx - vw), "menu": room}
     return None
 
 
