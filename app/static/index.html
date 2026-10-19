@@ -432,6 +432,7 @@ body.term #chip.work{opacity:0}          /* the terminal already says what he's 
 .mini{pointer-events:auto}
 .mini .mn-h{fill:var(--acc,#3d9b74);opacity:.2} .mini.fail .mn-h{fill:#ff2a2a;opacity:.16}
 .mini .mn-b{fill:url(#miniG);stroke:var(--rim,#262626);stroke-width:.8}
+.mini .mn-goo{fill:var(--body1,#0a0a0a)}   /* (the liquid while it divides in two, or its halves drink back together) */
 .mini .mn-w{fill:var(--whiteL,#f3dccf)} .mini .mn-p{fill:var(--pupL,#3d9b74)}
 .mini.fail .mn-p{opacity:0}   /* failed: flat, blank eyes and a red X (see miniBadge) */
 /* how a helper ended, as a little badge on its shoulder (a bead's too): a green check when done, a red X when it failed */
@@ -1269,8 +1270,12 @@ requestAnimationFrame(frame);
    the sparks. He glances at each new one as it splits off, and now and then follows one round. When it ends it shuts
    its eyes, touches his skin and is drunk back in, the same liquid in reverse: done → a green check for a second,
    then quickly, with a little gulp; stopped → slower; failed → first ~4 s of a calm, flat-eyed look with a red X.
-   In the notch they're beads that ooze out of its lip, slide along it and melt back in. Driven only by the server's
-   sub_start / sub_tick / sub_wait / sub_end events and the `subagents` list in /api/state. The goo filter is on only
+   One that runs helpers of its own divides the same way, at its size: it shuts its eyes, swells long, and pinches into
+   two eyeless blobs that circle each other as they travel its ring; when its last one ends they come round side by
+   side and drink back together into it, eyes and all (and only then does it end). In the notch they're beads that
+   ooze out of its lip, slide along it and melt back in (one with helpers: two beads rolling round each other). Driven
+   only by the server's sub_start / sub_tick / sub_wait / sub_kids / sub_end events and the `subagents` list in
+   /api/state. The goo filter is on only
    while one buds or merges; with reduced motion they sit still and fade in and out. */
 const MINIS=new Map(), MINI_R=15, BEAD_R=6.5;
 const RM=window.matchMedia?matchMedia('(prefers-reduced-motion: reduce)'):{matches:false};
@@ -1293,7 +1298,8 @@ function orbitPos(m,th){ const c=Math.cos(th)*m.R, s=Math.sin(th)*m.R, y0=s*Math
 // just over its own shadow (its top: 108 less its biggest radius, MINI_R at k ≈ 1.3 when near and ticking, and a gap)
 const MINI_FLOOR=108-MINI_R*1.3-4, miniFloor=y=>y>0?MINI_FLOOR*Math.tanh(y/MINI_FLOOR):y;
 function miniTipHTML(m){ const st=m.waiting?'waiting for your OK':m.st==='fail'||m.status==='failed'?"didn't finish":m.status==='done'?'done':m.status==='stopped'?'stopped':'';
-  return `<b>${esc(m.type||'helper')}</b>${esc(m.desc||'')}${st?`<i> · ${st}</i>`:''}`; }
+  const kids=m.kids>0?`${m.kids} sub-helper${m.kids>1?'s':''}`:'';
+  return `<b>${esc(m.type||'helper')}</b>${esc(m.desc||'')}${kids?`<i> · ${kids}</i>`:''}${st?`<i> · ${st}</i>`:''}`; }
 let tipFor=null; const tipEl=$('#miniTip');
 function miniTip(m,e){
   if(!e){ if(tipFor===m){ tipFor=null; tipEl.classList.remove('on'); } return; }
@@ -1307,14 +1313,19 @@ function miniHover(el,m){ el.addEventListener('mouseenter',e=>miniTip(m,e)); el.
 function miniMake(m){
   const g=sv('g',{class:'mini',opacity:0}); m.el=g;
   m.ring=sv('circle',{r:MINI_R+3.5,fill:'none',stroke:'#ffb02a','stroke-width':1.6,opacity:0},g);
+  m.sgoo=sv('g',{class:'mn-goo'},g);
   m.skin=sv('g',{},g); sv('circle',{class:'mn-h',r:MINI_R+3.2},m.skin); sv('circle',{class:'mn-b',r:MINI_R},m.skin);   // (a faint glow, like his, so a dark body still reads)
+  m.tw=[0,1].map(()=>{ const t=sv('g',{opacity:0},g); sv('circle',{class:'mn-h',r:MINI_R+3.2},t); sv('circle',{class:'mn-b',r:MINI_R},t); return t; });
+  m.twFront=1;                                    // (its two halves when it splits: the nearer one drawn last)
   m.eyes=sv('g',{},g); m.pups=[];
   for(const s of [-1,1]){ const e=sv('g',{transform:`rotate(${-s*9} ${s*5.2} -1)`},m.eyes);
     // (pupils rest just inside centre, so a glance can't push one off its white while the other stays put)
     sv('ellipse',{class:'mn-w',cx:s*5.2,cy:-1,rx:4.4,ry:7.4},e); const pp=sv('ellipse',{class:'mn-p',cx:s*4,cy:-1,rx:1.15,ry:3.5},e); pp._cx=s*4; pp._s=s; m.pups.push(pp); }
   ML.front.appendChild(g); m.back=false; miniHover(g,m);
   m.sh=sv('ellipse',{cy:108,rx:0,ry:0,fill:'url(#shG)',opacity:0},ML.sh);   // its shadow, on his floor
+  m.sh2=sv('ellipse',{cy:108,rx:0,ry:0,fill:'url(#shG)',opacity:0},ML.sh);  // (and its second half's, while it's split)
   m.bd=sv('circle',{class:'mn-bead',r:0,fill:'#000'},ML.bgoo); miniHover(m.bd,m);
+  m.bd2=sv('circle',{class:'mn-bead',r:0,fill:'#000',opacity:0},ML.bgoo); miniHover(m.bd2,m);
   m.be=sv('g',{},ML.bface); m.bes=[-1,1].map(s=>sv('ellipse',{cx:s*2.6,cy:-.6,rx:1.5,ry:1.9},m.be));
 }
 function miniAdd(ev){
@@ -1323,7 +1334,8 @@ function miniAdd(ev){
   if(m){ if(ev.type) m.type=ev.type; if(ev.desc) m.desc=ev.desc; return m; }
   const n=performance.now(), rm=RM.matches;
   m={id:ev.id, type:ev.type||'', desc:ev.desc||'', bg:!!ev.bg, waiting:!!ev.waiting, ...miniOrbit(ev.id),
-     st:'bud', t0:n, born:n, dur:rm?320:850, th:0, spdK:1, flat:0, tickAt:-1e9, glance:[0,0], blinkAt:n+1500+Math.random()*3000, px:null, py:null, goo:null};
+     st:'bud', t0:n, born:n, dur:rm?320:850, th:0, spdK:1, flat:0, tickAt:-1e9, glance:[0,0], blinkAt:n+1500+Math.random()*3000, px:null, py:null, goo:null,
+     kids:Math.max(0,ev.kids|0), sv:0, svDir:0, phi:0, pinchAt:0, alignTo:null};
   MINIS.set(m.id,m); miniMake(m);
   if(!rm) G.jelly.kick(.25);                      // he squeezes it out
   hgaze={m, until:n+(rm?700:1100)}; hgazeNext=Math.max(hgazeNext,n+6000+Math.random()*9000);   // ooh, a new one: he looks
@@ -1332,7 +1344,7 @@ function miniAdd(ev){
 function miniEnd(m,status,ts){
   if(m.st==='merge'||m.st==='fail'||m.st==='done') return;
   m.status=status==='done'||status==='stopped'?status:'failed';
-  if(m.st==='bud'){ m.pend=true; return; }      // let it finish budding first
+  if(m.st==='bud'||m.sv>0){ m.pend=true; return; }   // let it finish budding first, or its halves come back together
   if(m.status==='failed'){ m.st='fail'; m.t0=ts; m.el.classList.add('fail'); miniBadge(m,false,ts); if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); return; }
   if(m.status==='done'){ m.st='done'; m.t0=ts; miniBadge(m,true,ts); if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); return; }   // a check, then in
   miniMerge(m,ts);
@@ -1356,7 +1368,7 @@ function miniMerge(m,ts){ const rm=RM.matches;
   if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
 function miniGone(m){
   if(m.goo) m.goo.forEach(c=>c.remove());
-  m.el.remove(); m.sh.remove(); m.bd.remove(); m.be.remove(); if(m.bbg) m.bbg.remove(); MINIS.delete(m.id); miniTip(m,null);
+  m.el.remove(); m.sh.remove(); m.sh2.remove(); m.bd.remove(); m.bd2.remove(); m.be.remove(); if(m.bbg) m.bbg.remove(); MINIS.delete(m.id); miniTip(m,null);
   if(m.status==='done'&&!RM.matches&&!document.body.classList.contains('bar')) G.jelly.kick(.35);   // gulp
   if(!MINIS.size){ gooSet(false); beadGooSet(false,null); sendRegion(true); }
 }
@@ -1385,6 +1397,71 @@ function miniSlime(m,gp){
 }
 // the stretch of a drop that just let go: it springs back round, a few dying wobbles
 const miniWob=u=>.2*Math.exp(-u*6)*Math.cos(u*21);
+// a helper running helpers of its own divides in two. m.sv: 0 one little Void … 1 two blobs, side by side across its
+// own centre at m.phi (they circle each other); it goes up while it has helpers out on its ring, and down when they've
+// all ended (or it has): first round to side by side, so they drink back together across, never through, each other
+const SPLIT_R=11.5, SPLIT_D=18;
+function miniSplitStep(m,ts,dt,rm){
+  if(m.st==='orbit'&&m.kids>0&&!m.pend){
+    if(!m.sv) m.phi=0;
+    m.svDir=1; m.alignTo=null;
+    const was=m.sv; m.sv=Math.min(1,m.sv+dt/(rm?.32:.9));
+    if(was<.76&&m.sv>=.76) m.pinchAt=ts;                               // (free of each other: it wobbles)
+    if(!rm) m.phi+=2.6*m.spdK*dt*smooth((m.sv-.6)/.4);                   // round each other, once apart
+  } else if(m.sv>0){
+    if(!rm&&m.svDir>0){
+      if(m.alignTo==null) m.alignTo=(m.sv>.95?Math.ceil:Math.round)(m.phi/Math.PI)*Math.PI;   // (on round, not back)
+      const step=2.6*Math.max(m.spdK,.4)*dt;
+      m.phi=m.phi<m.alignTo?Math.min(m.alignTo,m.phi+step):Math.max(m.alignTo,m.phi-step);
+      if(m.phi!==m.alignTo) return;
+    }
+    m.svDir=-1; m.pinchAt=0;
+    m.sv=Math.max(0,m.sv-dt/(rm?.32:.75));
+  }
+}
+// the split at m.sv, the same liquid as budding off him: eyes shut, its skin gives way to the goo, which swells long
+// round a fat waist; the waist sinks and the two ends pinch apart (too fat to draw a thread), wobble, and put their own
+// skins on. d: each half's distance from its centre, r: a half's radius, w: the waist, sk1/sk2: the one skin / the
+// halves' skins, gp: the goo's on. Back together it runs in reverse. Reduced motion: a cross-fade, side by side.
+function miniSplitGeo(m,ts,rm,goo){
+  const p=m.sv, S=MINI_R;
+  if(rm) return {d:SPLIT_D, r:SPLIT_R, w:0, sk1:1-p, sk2:p, open:1, eo:1-p, gp:false, sx:1};
+  const g={d:p<.22?0:p<.7?14*easeIO((p-.22)/.48):lerp(14,SPLIT_D,easeOutC((p-.7)/.2)), r:lerp(S*.86,SPLIT_R,smooth((p-.2)/.4)),
+           w:S*(1-smooth((p-.3)/.28)), sk1:1-smooth((p-.1)/.14), sk2:smooth((p-.74)/.12), open:1-smooth(p/.14), eo:1,
+           gp:goo&&p>.06&&p<.9, sx:1};
+  if(!goo){ g.sk1=1-smooth((p-.1)/.3); g.sk2=smooth((p-.15)/.3); return g; }           // (glow off: no goo)
+  if(m.svDir>0) g.sx=m.pinchAt?1+miniWob((ts-m.pinchAt)/1000):p<.76?1+.2*smooth((p-.25)/.51):1;   // pulled long, let go
+  else g.sx=1+.2*Math.sin(Math.PI*clamp((.86-p)/.5,0,1));                               // drawn long toward each other
+  return g;
+}
+// where its halves are: ± (x, y) from its centre, z toward you (their turn round each other is tilted like its ring)
+function miniPair(m,sg){ const c=Math.cos(m.phi), s=Math.sin(m.phi); return [c*sg.d, s*sg.d*.38, s]; }
+function miniTwins(m,sg){
+  if(!sg){ if(m.twOn){ m.tw.forEach(t=>t.setAttribute('opacity',0)); miniPairGoo(m,null); m.ring.setAttribute('r',MINI_R+3.5); m.twOn=false; } return; }
+  m.twOn=true;
+  const [ox,oy,oz]=miniPair(m,sg), ax=Math.atan2(oy,ox)*180/Math.PI, sy=1-.5*(sg.sx-1), pz=smooth((m.sv-.6)/.4)*.08;
+  m.tw.forEach((t,i)=>{ const s=i?1:-1, q=sg.r/MINI_R*(1+s*oz*pz);
+    t.setAttribute('transform',`translate(${(s*ox).toFixed(2)},${(s*oy).toFixed(2)}) rotate(${ax.toFixed(1)}) scale(${(sg.sx*q).toFixed(3)},${(sy*q).toFixed(3)}) rotate(${(-ax).toFixed(1)})`);
+    t.setAttribute('opacity',sg.sk2.toFixed(3)); });
+  const fr=oz>=0?1:0; if(m.twFront!==fr){ m.el.insertBefore(m.tw[fr],m.eyes); m.twFront=fr; }
+  m.ring.setAttribute('r',(Math.max(MINI_R,sg.d+sg.r)+3.5).toFixed(1));               // (waiting: round the pair)
+  miniPairGoo(m,sg.gp?sg:null,ox,oy,ax,sy);
+}
+// the goo while it divides: its two ends and the waist between them, rounded into one by #gooM till they pinch apart
+// (inside the little Void's own group, so it's in front of him or behind him with the rest of it)
+function miniPairGoo(m,sg,ox,oy,ax,sy){
+  if(!sg){ if(m.pg){ m.pg.forEach(c=>c.remove()); m.pg=null; m.sgoo.removeAttribute('filter'); } return; }
+  if(!m.pg){ m.pg=[sv('ellipse',{},m.sgoo),sv('ellipse',{},m.sgoo),sv('circle',{},m.sgoo)]; m.sgoo.setAttribute('filter','url(#gooM)'); }
+  const f=v=>Math.max(0,v).toFixed(2);
+  [-1,1].forEach((s,i)=>{ const e=m.pg[i], cx=(s*ox).toFixed(2), cy=(s*oy).toFixed(2);
+    e.setAttribute('cx',cx); e.setAttribute('cy',cy); e.setAttribute('rx',f(sg.r*sg.sx)); e.setAttribute('ry',f(sg.r*sy));
+    e.setAttribute('transform',`rotate(${ax.toFixed(1)} ${cx} ${cy})`); });
+  m.pg[2].setAttribute('r',f(sg.w));
+}
+// a shadow on his floor under (x, y): smaller and fainter the higher it flies (darkest skimming it)
+function miniShade(el,x,y,r,o){ const fl=clamp((MINI_FLOOR-y)/240,0,1), sr=r*(1.1-.55*fl);
+  el.setAttribute('cx',x.toFixed(1)); el.setAttribute('rx',sr.toFixed(2)); el.setAttribute('ry',(sr*.16).toFixed(2));
+  el.setAttribute('opacity',clamp(o*(1-.75*fl),0,1).toFixed(3)); }
 function orbDraw(m,ts,dt,p,rm,goo){
   const S=MINI_R;
   let x,y,z=0,op=1,k=1,gp=null,a=0,d=0,sx=1,sk=1,open=1;
@@ -1414,19 +1491,23 @@ function orbDraw(m,ts,dt,p,rm,goo){
     if(!goo){ gp=null; sx=1; }                                          // (glow off: no goo)
     if(gp) Object.assign(gp,{x,y,a,d,sx,sy:1-.5*(sx-1)}); }
   k*=1+z/m.R*.18+.15*Math.exp(-(ts-m.tickAt)/180);
-  const back=z<0, clear=Math.hypot(x,y)>76+S*k+2;     // (switch layer only off his silhouette: the soft floor pulls the
+  const sg=m.sv>0?miniSplitGeo(m,ts,rm,goo):null, ext=sg?Math.max(S,sg.d+sg.r):S;   // (split: as wide as the pair)
+  const back=z<0, clear=Math.hypot(x,y)>76+ext*k+2;   // (switch layer only off his silhouette: the soft floor pulls the
   if(back!==m.back&&clear){ (back?ML.back:ML.front).appendChild(m.el); m.back=back; }   //  ring's low crossing over him)
   const deg=(a*180/Math.PI).toFixed(1), st=sx===1?'':` rotate(${deg}) scale(${sx.toFixed(3)},${(1-.5*(sx-1)).toFixed(3)}) rotate(${-deg})`;
   m.el.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})${st} scale(${k.toFixed(3)})`);
   m.el.setAttribute('opacity',clamp(op,0,1).toFixed(3));
-  m.skin.setAttribute('opacity',sk.toFixed(3));
-  // its shadow under it on his floor: smaller and fainter the higher it flies (darkest skimming it), none while it's still in his skin
-  const fl=clamp((MINI_FLOOR-y)/240,0,1), so=op*(rm||!(m.st==='bud'||m.st==='merge')?1:smooth((d-56)/40))*(1-.75*fl), sr=S*k*(1.1-.55*fl);
-  m.sh.setAttribute('cx',x.toFixed(1)); m.sh.setAttribute('rx',sr.toFixed(2)); m.sh.setAttribute('ry',(sr*.16).toFixed(2));
-  m.sh.setAttribute('opacity',clamp(so,0,1).toFixed(3));
-  m.open=open; m.eo=rm||!goo||!(m.st==='bud'||m.st==='merge')||(m.st==='merge'&&p<.32)?1:smooth((d-82)/10);   // (not drawn over him while in his skin)
+  m.skin.setAttribute('opacity',(sk*(sg?sg.sk1:1)).toFixed(3));
+  // its shadow under it on his floor, none while it's still in his skin; split, each half has its own
+  const so=op*(rm||!(m.st==='bud'||m.st==='merge')?1:smooth((d-56)/40)), [ox,oy]=sg?miniPair(m,sg):[0,0],
+        sr=(sg?lerp(S,sg.r,smooth(m.sv/.5)):S)*k;
+  miniShade(m.sh,x-ox*k,y-oy*k,sr,so);
+  if(sg||m.sh2on){ miniShade(m.sh2,x+ox*k,y+oy*k,sr,sg?so*(rm?m.sv:smooth(m.sv/.3)):0); m.sh2on=!!sg; }
+  m.open=open*(sg?sg.open:1);
+  m.eo=(rm||!goo||!(m.st==='bud'||m.st==='merge')||(m.st==='merge'&&p<.32)?1:smooth((d-82)/10))*(sg?sg.eo:1);   // (not drawn over him while in his skin)
   const vx=m.px==null?0:(x-m.px)/Math.max(dt,1e-3), vy=m.py==null?0:(y-m.py)/Math.max(dt,1e-3); m.px=x; m.py=y;
   miniEyes(m,ts,vx,vy,rm);
+  miniTwins(m,sg);
   return miniSlime(m,gp);
 }
 // eyes: flat when it failed, a blink now and then, pupils glance where it's going (somewhere new on each tool use)
@@ -1458,18 +1539,24 @@ function beadDraw(m,ts,dt,p,geo,rm,goo){
   else if(m.st==='merge'){ if(rm) op=1-p; else { const e=easeInC(p); o=lerp(3,-10,e); r=BEAD_R*(1-.45*e); } }
   else if(m.waiting&&!rm) o=3+Math.sin(ts/260)*1.2;
   const along=geo.c+geo.half*(rm?clamp(-.75+(m.slot*.5)%1.5,-.9,.9):Math.sin(m.bph)), out=geo.base+geo.n*o;
-  const x=clamp(geo.horiz?along:out,8,332), y=clamp(geo.horiz?out:along,8,452);    // (always inside his window)
-  m.bd.setAttribute('cx',x.toFixed(1)); m.bd.setAttribute('cy',y.toFixed(1)); m.bd.setAttribute('r',Math.max(0,r).toFixed(2));
+  // with helpers of its own: two smaller eyeless beads, rolling round each other along the lip (the finer goo parts them)
+  const e=m.sv>0?(rm?1:smooth(m.sv)):0, sp=e*BEAD_R*1.25, pa=Math.cos(m.phi)*sp, po=Math.sin(m.phi)*sp*.5, br=Math.max(0,r*(1-.2*e));
+  const at=s=>{ const al=along+s*pa, ou=out+geo.n*s*po; return [clamp(geo.horiz?al:ou,8,332), clamp(geo.horiz?ou:al,8,452)]; };   // (always inside his window)
+  const [x,y]=at(-1);
+  m.bd.setAttribute('cx',x.toFixed(1)); m.bd.setAttribute('cy',y.toFixed(1)); m.bd.setAttribute('r',br.toFixed(2));
   m.bd.setAttribute('opacity',op.toFixed(3));
+  if(m.sv>0||m.bd2on){ const [x2,y2]=at(1); m.bd2on=m.sv>0;
+    m.bd2.setAttribute('cx',x2.toFixed(1)); m.bd2.setAttribute('cy',y2.toFixed(1)); m.bd2.setAttribute('r',br.toFixed(2));
+    m.bd2.setAttribute('opacity',(m.sv>0?op*(rm?m.sv:1):0).toFixed(3)); }
   m.lk=geo.horiz?[(along-geo.c)/geo.half,geo.n]:[geo.n,(along-geo.c)/geo.half];      // where it is, for his eyes (see helperGaze)
   if(!rm&&ts>m.blinkAt+160) m.blinkAt=ts+2600+Math.random()*4200;
   const bp=(ts-m.blinkAt)/160, blink=bp<0||bp>1?0:Math.sin(Math.PI*bp);
-  const fail=m.st==='fail'||m.status==='failed', eo=(m.st==='bud'?smooth((p-.5)/.4):m.st==='merge'?1-smooth(p/.4):1)*op;
+  const fail=m.st==='fail'||m.status==='failed', eo=(m.st==='bud'?smooth((p-.5)/.4):m.st==='merge'?1-smooth(p/.4):1)*op*(rm?1-m.sv:1-smooth(m.sv/.3));
   m.be.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)}) scale(1,${Math.max(.1,(1-.75*m.flat)*(1-.9*blink)).toFixed(3)})`);
   m.be.setAttribute('opacity',eo.toFixed(3));
   m.bes.forEach(e=>e.setAttribute('fill',m.waiting&&!fail?'#ffb02a':'var(--whiteL,#f3dccf)'));
   if(m.bbg){ const d=4.6; badgeAt(m.bbg,clamp(x+(geo.horiz?d:geo.n*d),4,336),clamp(y+(geo.horiz?geo.n*d:-d),4,456),miniBadgeK(m,ts,rm,p)*op); }   // its check / X, on the outer side
-  return goo&&(m.st==='bud'||m.st==='merge');
+  return goo&&(m.st==='bud'||m.st==='merge'||(m.sv>0&&m.sv<1));
 }
 function miniFrame(ts,dt,dxp){
   const inBar=document.body.classList.contains('bar'), rm=RM.matches, goo=!lowFx&&!rm, edge=inBar?(barEdge()||'top'):null;
@@ -1477,12 +1564,14 @@ function miniFrame(ts,dt,dxp){
   if(!inBar){ ML.goo.setAttribute('transform',tr); ML.back.setAttribute('transform',tr); ML.front.setAttribute('transform',tr); ML.sh.setAttribute('transform',tr); }
   let slime=false, beadSlime=false;
   for(const m of [...MINIS.values()]){
-    if(m.st==='bud'&&ts-m.t0>=m.dur){ m.st='orbit'; m.t0=ts; m.spdK=0; if(m.pend){ m.pend=false; const s=m.status; m.status=null; miniEnd(m,s,ts); } }
+    if(m.st==='bud'&&ts-m.t0>=m.dur){ m.st='orbit'; m.t0=ts; m.spdK=0; }
+    if(m.pend&&m.st==='orbit'&&!m.sv){ m.pend=false; const s=m.status; m.status=null; miniEnd(m,s,ts); }   // (it ended while budding or split)
     if(m.st==='fail'&&ts-m.t0>=4000) miniMerge(m,ts);
     if(m.st==='done'&&ts-m.t0>=700) miniMerge(m,ts);       // (its check shows for a moment first)
     if(m.st==='merge'&&ts-m.t0>=m.dur){ miniGone(m); continue; }
     const p=clamp((ts-m.t0)/m.dur,0,1);
     m.spdK=approach(m.spdK,m.st==='fail'?.2:m.waiting?.35:1,dt,3);
+    miniSplitStep(m,ts,dt,rm);
     if(!rm&&(m.st==='orbit'||m.st==='fail'||m.st==='done')) m.th+=m.w*m.spdK*dt;
     m.flat=approach(m.flat,m.st==='fail'||m.status==='failed'?1:0,dt,rm?40:5);
     if(inBar) beadSlime=beadDraw(m,ts,dt,p,geo,rm,goo)||beadSlime;
@@ -1509,6 +1598,7 @@ function helperGaze(ts,m,away){
 }
 function miniTick(ev){ const m=MINIS.get(ev.id); if(!m) return; m.tool=ev.tool||''; m.tickAt=performance.now(); m.glance=[(Math.random()-.5)*3.2,(Math.random()-.5)*2.4]; }
 function miniWait(ev){ const m=MINIS.get(ev.id); if(!m) return; m.waiting=!!ev.on; if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
+function miniKids(ev){ const m=MINIS.get(ev.id); if(!m) return; m.kids=Math.max(0,ev.n|0); if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
 function miniEndEv(ev){ let m=MINIS.get(ev.id);
   if(!m&&ev.status==='failed'&&(ev.type||ev.desc)) m=miniAdd(ev);   // it failed to even start: still show it, briefly
   if(m) miniEnd(m,ev.status,performance.now()); }
@@ -1516,7 +1606,8 @@ function miniEndEv(ev){ let m=MINIS.get(ev.id);
 // of what has ended (but not one that only just started: its event may have beaten this list here)
 function miniSync(list){
   if(!Array.isArray(list)) return; const n=performance.now(), ids=new Set();
-  for(const s of list){ if(!s||!s.id) continue; ids.add(s.id); const m=miniAdd(s); if(m&&m.waiting!==!!s.waiting) miniWait({id:s.id,on:s.waiting}); }
+  for(const s of list){ if(!s||!s.id) continue; ids.add(s.id); const m=miniAdd(s); if(m&&m.waiting!==!!s.waiting) miniWait({id:s.id,on:s.waiting});
+    if(m&&m.kids!==Math.max(0,s.kids|0)) miniKids({id:s.id,n:s.kids}); }
   for(const m of [...MINIS.values()]) if(!ids.has(m.id)&&(m.st==='bud'||m.st==='orbit')&&!m.status&&n-m.born>3000) miniEnd(m,'stopped',n);
 }
 // clickable spots for hovering them, while there are any (click-through / notch: the rest of the window lets clicks through)
@@ -1713,6 +1804,7 @@ function onEvent(ev){
   if(ev.t==='sub_start'){ miniAdd(ev); return; }
   if(ev.t==='sub_tick'){ miniTick(ev); return; }
   if(ev.t==='sub_wait'){ miniWait(ev); return; }
+  if(ev.t==='sub_kids'){ miniKids(ev); return; }
   if(ev.t==='sub_end'){ miniEndEv(ev); wake(); return; }
   if(ev.t==='followup_soon'){ wake(); if(!busy) poke('thinking',30000); return; }   // a helper is back: he's mulling it over (its words come with the followup)
   if(ev.t==='followup'){ if(transient==='thinking') transient=null; followQ.push(ev); followTry(); return; }

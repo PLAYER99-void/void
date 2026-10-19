@@ -243,6 +243,37 @@ class Routing(unittest.TestCase):
         self.assertEqual(bus(out, "sub_end"), [{"t": "sub_end", "id": "t2", "status": "stopped"}])
         self.assertEqual(list(s.tasks), ["t3"])
 
+    def test_a_subagents_own_helpers_are_counted_on_its_little_void(self):
+        """Shaped like the captures' subagent-owned tasks: owned_by_subagent + parent_task_id, ended by their own
+        task_notification; background ones also sit in the background list."""
+        s = agents.Stream()
+        kid = lambda tid, par, bg=False, **kw: started(tid, "r" + tid, bg, **dict(
+            {"owned_by_subagent": True, "parent_task_id": par, "spawn_depth": 2}, **kw))
+        out = feed(s, started("t1", "r1"), started("t2", "r2"), kid("k1", "t1"), kid("k2", "t1", bg=True),
+                   kid("k3", "t1", task_type="local_bash"), kid("k4", "k1", spawn_depth=3), kid("k5", "nobody"))
+        self.assertEqual([e["id"] for e in bus(out, "sub_start")], ["t1", "t2"])     # no little Void of their own…
+        self.assertEqual(bus(out, "sub_kids"), [{"t": "sub_kids", "id": "t1", "n": 1}, {"t": "sub_kids", "id": "t1", "n": 2},
+                                                {"t": "sub_kids", "id": "t1", "n": 3}])   # …but t1's count (k4 via k1)
+        self.assertEqual({t["id"]: t["kids"] for t in s.running()}, {"t1": 3, "t2": 0})
+        out = feed(s, notified("k1"), notified("k3"))
+        self.assertEqual(bus(out), [{"t": "sub_kids", "id": "t1", "n": 2}])           # (a shell isn't a helper)
+        # a background one gone from the list without a word has ended too
+        out = s.feed({"type": "system", "subtype": "background_tasks_changed", "tasks": [{"task_id": "t1"}, {"task_id": "t2"}]})
+        self.assertEqual(bus(out), [{"t": "sub_kids", "id": "t1", "n": 1}])
+        out = s.feed(notified("k4"))
+        self.assertEqual(bus(out), [{"t": "sub_kids", "id": "t1", "n": 0}])
+
+    def test_a_subagents_helpers_go_with_it(self):
+        s = agents.Stream()
+        kid = lambda tid, par: started(tid, "r" + tid, False, owned_by_subagent=True, parent_task_id=par)
+        feed(s, started("t1", "r1"), kid("k1", "t1"), kid("k2", "t1"), started("t2", "r2"), kid("k3", "t2"))
+        out = feed(s, notified("t1"), notified("k1"))
+        self.assertEqual(bus(out, "sub_end"), [{"t": "sub_end", "id": "t1", "status": "done"}])
+        self.assertEqual(bus(out, "sub_kids"), [])                                     # (no count for an ended one)
+        self.assertEqual(s.kids, {"k3": ("t2", False)})
+        self.assertEqual(bus(s.end_all("failed"), "sub_kids"), [])
+        self.assertEqual(s.kids, {})
+
     def test_memory_prefix_text(self):
         self.assertIn("- tea, not coffee", agents.notes_prefix("Things…:\n- tea, not coffee"))
         self.assertIn("cleared", agents.notes_prefix(""))
@@ -493,7 +524,7 @@ class LongLived(unittest.TestCase):
         self.assertIsNone(h.brain.agent_info(None))
         self.assertEqual(h.brain.agent_info("zz", "Plan"), {"id": "zz", "type": "Plan", "desc": ""})
         h.brain.set_waiting("t1", True)
-        self.assertEqual(h.brain.running(), [{"id": "t1", "type": "Explore", "desc": "Find it", "waiting": True}])
+        self.assertEqual(h.brain.running(), [{"id": "t1", "type": "Explore", "desc": "Find it", "waiting": True, "kids": 0}])
         h.brain.set_waiting("t1", False)
         self.assertEqual(h.bus("sub_wait"), [{"t": "sub_wait", "id": "t1", "on": True},
                                              {"t": "sub_wait", "id": "t1", "on": False}])

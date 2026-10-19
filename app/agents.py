@@ -5,7 +5,7 @@ subagent that finishes later still gets its say: Claude Code runs a turn of its 
 short follow-up. Two parts:
 
   * Stream – turns the raw stream-json events into Void's events (pure: no threads, no processes; see the tests).
-    It knows which subagents are running, and which turn a reply belongs to — yours, or a follow-up — before any of
+    It knows which subagents are running (and how many helpers of their own each one has), and which turn a reply belongs to — yours, or a follow-up — before any of
     it is spoken (a turn's origin is only written on its result, so while a follow-up could be in flight, its text
     is held until then).
   * Brain – owns the process: starts it (in its own process group), feeds it your messages, restarts it when real
@@ -71,6 +71,7 @@ class Stream:
         self.describe = describe or (lambda name, inp: ("", {}))
         self.oneshot = oneshot
         self.tasks = {}            # running subagents: task_id → {id, type, desc, bg, run, final, waiting}
+        self.kids = {}             # their own running subagents (any depth): task_id → (his subagent's task_id, bg)
         self.runs = {}             # run_id → task_id (finished ones too: follow-ups name their run)
         self.launches = {}         # Agent tool_use id → {type, desc}, until it starts (or fails to)
         self.void_stopped = set()  # run ids Void stopped itself: their follow-ups aren't said
@@ -82,12 +83,25 @@ class Stream:
 
     # ---- subagents
     def running(self):
-        return [{"id": t["id"], "type": t["type"], "desc": t["desc"], "waiting": t["waiting"]} for t in self.tasks.values()]
+        return [{"id": t["id"], "type": t["type"], "desc": t["desc"], "waiting": t["waiting"], "kids": self._kids(t["id"])}
+                for t in self.tasks.values()]
+
+    def _kids(self, tid):
+        return sum(1 for top, _ in self.kids.values() if top == tid)
+
+    def _kid_count(self, out, top):
+        if top in self.tasks:
+            out.append(("bus", {"t": "sub_kids", "id": top, "n": self._kids(top)}))
+
+    def _drop_kids(self, top):
+        """His subagent ended: its own helpers go with its little Void (whatever they still do, it isn't shown)."""
+        self.kids = {k: v for k, v in self.kids.items() if v[0] != top}
 
     def end_all(self, status):
         """The process is gone: every subagent ends with it."""
         out = [("bus", {"t": "sub_end", "id": tid, "status": status}) for tid in self.tasks]
         self.tasks.clear()
+        self.kids.clear()
         self.launches.clear()
         self.awaiting.clear()
         self.turn = []
@@ -160,9 +174,16 @@ class Stream:
                 out.append(("session", o["session_id"]))
             self._main(out, {"t": "init", "model": o.get("model", "")})
         elif st == "task_started":
-            # only his own subagents get a little Void: not shell commands, not a subagent's own helpers
-            if (o.get("task_type") != "local_agent" or o.get("owned_by_subagent") or o.get("parent_task_id")
-                    or (o.get("spawn_depth") or 1) > 1 or not o.get("task_id")):
+            # only his own subagents get a little Void: not shell commands, not a subagent's own helpers (those are
+            # counted on the little Void of the subagent they belong to, however deep, when we can tell which)
+            if o.get("task_type") != "local_agent" or not o.get("task_id"):
+                return
+            par = o.get("parent_task_id")
+            if par or o.get("owned_by_subagent") or (o.get("spawn_depth") or 1) > 1:
+                top = par if par in self.tasks else (self.kids.get(par) or (None,))[0]
+                if top:
+                    self.kids[o["task_id"]] = (top, bool(o.get("is_backgrounded")))
+                    self._kid_count(out, top)
                 return
             tid = o["task_id"]
             launch = self.launches.pop(o.get("tool_use_id", ""), None) or {}
@@ -182,8 +203,12 @@ class Stream:
             if t and s and s not in ("running", "pending"):
                 t["final"] = s
         elif st == "task_notification":
+            kid = self.kids.pop(o.get("task_id"), None)
+            if kid:
+                self._kid_count(out, kid[0])
             t = self.tasks.pop(o.get("task_id"), None)
             if t:
+                self._drop_kids(t["id"])
                 out.append(("bus", {"t": "sub_end", "id": t["id"], "status": sub_status(o.get("status"))}))
                 if t["bg"] and t["run"]:            # Claude Code will take a turn of its own to tell about it
                     self.awaiting[t["run"]] = 0
@@ -194,7 +219,11 @@ class Stream:
             live = {x.get("task_id") for x in o.get("tasks") or [] if isinstance(x, dict)}
             for tid in [k for k, t in self.tasks.items() if t["bg"] and k not in live]:
                 t = self.tasks.pop(tid)
+                self._drop_kids(tid)
                 out.append(("bus", {"t": "sub_end", "id": tid, "status": sub_status(t["final"] or "stopped")}))
+            gone = [k for k, (_, bg) in self.kids.items() if bg and k not in live]
+            for top in dict.fromkeys(self.kids.pop(k)[0] for k in gone):
+                self._kid_count(out, top)
 
     def _result(self, o, out):
         if o.get("session_id"):
