@@ -1288,7 +1288,10 @@ function miniOrbit(id){
 }
 // on its ring at angle th: (x, y) on screen and z toward you (z < 0: behind him)
 function orbitPos(m,th){ const c=Math.cos(th)*m.R, s=Math.sin(th)*m.R, y0=s*Math.cos(m.inc), cn=Math.cos(m.node), sn=Math.sin(m.node);
-  return [c*cn-y0*sn, c*sn+y0*cn, s*Math.sin(m.inc)]; }
+  return [c*cn-y0*sn, miniFloor(c*sn+y0*cn), s*Math.sin(m.inc)]; }
+// a tilted ring dips to y ≈ 128, through his floor (108): below centre it eases into a soft floor instead, skimming
+// just over its own shadow (its top: 108 less its biggest radius, MINI_R at k ≈ 1.3 when near and ticking, and a gap)
+const MINI_FLOOR=108-MINI_R*1.3-4, miniFloor=y=>y>0?MINI_FLOOR*Math.tanh(y/MINI_FLOOR):y;
 function miniTipHTML(m){ const st=m.waiting?'waiting for your OK':m.st==='fail'||m.status==='failed'?"didn't finish":m.status==='done'?'done':m.status==='stopped'?'stopped':'';
   return `<b>${esc(m.type||'helper')}</b>${esc(m.desc||'')}${st?`<i> · ${st}</i>`:''}`; }
 let tipFor=null; const tipEl=$('#miniTip');
@@ -1385,7 +1388,7 @@ const miniWob=u=>.2*Math.exp(-u*6)*Math.cos(u*21);
 function orbDraw(m,ts,dt,p,rm,goo){
   const S=MINI_R;
   let x,y,z=0,op=1,k=1,gp=null,a=0,d=0,sx=1,sk=1,open=1;
-  if(rm){ const a=-Math.PI/2+m.slot*.9+.45; x=Math.cos(a)*112; y=Math.sin(a)*112; op=m.st==='bud'?p:m.st==='merge'?1-p:1; }
+  if(rm){ const a=-Math.PI/2+m.slot*.9+.45; x=Math.cos(a)*112; y=miniFloor(Math.sin(a)*112); op=m.st==='bud'?p:m.st==='merge'?1-p:1; }
   else if(m.st==='bud'){   // his skin swells, the drop rounds out of it and pinches off, wobbles round, opens its eyes
     a=m.node;
     d=p<.4?lerp(56,86,easeOutC(p/.4)):p<.56?lerp(86,100,easeIO((p-.4)/.16)):lerp(100,m.R,easeIO((p-.56)/.44));
@@ -1416,8 +1419,8 @@ function orbDraw(m,ts,dt,p,rm,goo){
   m.el.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})${st} scale(${k.toFixed(3)})`);
   m.el.setAttribute('opacity',clamp(op,0,1).toFixed(3));
   m.skin.setAttribute('opacity',sk.toFixed(3));
-  // its shadow under it on his floor: smaller and fainter the higher it flies, none while it's still in his skin
-  const fl=clamp((108-y)/240,0,1), so=op*(rm||!(m.st==='bud'||m.st==='merge')?1:smooth((d-56)/40))*(1-.75*fl), sr=S*k*(1.1-.55*fl);
+  // its shadow under it on his floor: smaller and fainter the higher it flies (darkest skimming it), none while it's still in his skin
+  const fl=clamp((MINI_FLOOR-y)/240,0,1), so=op*(rm||!(m.st==='bud'||m.st==='merge')?1:smooth((d-56)/40))*(1-.75*fl), sr=S*k*(1.1-.55*fl);
   m.sh.setAttribute('cx',x.toFixed(1)); m.sh.setAttribute('rx',sr.toFixed(2)); m.sh.setAttribute('ry',(sr*.16).toFixed(2));
   m.sh.setAttribute('opacity',clamp(so,0,1).toFixed(3));
   m.open=open; m.eo=rm||!goo||!(m.st==='bud'||m.st==='merge')||(m.st==='merge'&&p<.32)?1:smooth((d-82)/10);   // (not drawn over him while in his skin)
