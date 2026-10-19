@@ -113,6 +113,11 @@ class Remote(QObject):
     cmd = Signal(str)
 
 
+class ScreenWatch(QObject):
+    """macOS: the menu bar or the Dock may have come, gone or moved (from Cocoa's notifications)."""
+    changed = Signal()
+
+
 class Ghost(QWidget):
     """The notch left on the wall when he's pulled out of it: it melts back into the screen edge on its own (black,
     shrinking into the edge) while he goes wherever you take him. Click-through, never takes focus, gone in 0.3 s."""
@@ -168,6 +173,7 @@ class VoidWindow(QWidget):
         self.hover, self.hpos, self.home, self.rects, self.through = False, None, None, None, None
         self.bar, self.bar_home = False, None                                # top bar: his eyes in a notch up top
         self.want_bar, self.glide_n = False, 0                               # (room for the notch's glow; current glide)
+        self.bar_inset = 0                                                   # px the notch hangs in from the screen edge
         self.shown = True
         self.save_t = QTimer(self, singleShot=True, interval=700, timeout=self._save_pos)   # save after you stop moving him
 
@@ -206,6 +212,7 @@ class VoidWindow(QWidget):
         self.show()
         if MAC:
             self._mac_native()
+            self._watch_screens()
         self.remote = Remote()
         self.remote.cmd.connect(self._remote_cmd)
         threading.Thread(target=self._serve, daemon=True).start()
@@ -321,6 +328,55 @@ class VoidWindow(QWidget):
          "peek:hide": self.hide, "peek:show": self.show_me}.get(msg, lambda: None)()
 
     # ---- the bar: merged into a screen edge as a notch (the page draws it on the matching side of the window)
+    def _bar_area(self, scr):
+        """Where the bar docks on `scr`: the rect its window sits flush in, and how far in from each of its edges the
+        notch hangs. macOS: the whole screen, the notch just under the menu bar or beside the Dock only while they're
+        really there (AppKit, asked now: Qt's availableGeometry always keeps room for the menu bar, even over a
+        full-screen app, and isn't asked again when you change Space). Elsewhere: what the taskbar leaves, flush."""
+        if MAC:
+            g = scr.geometry()
+            ins = winsys.edge_insets_now(g.x(), g.y(), g.width(), g.height())
+            if ins:
+                return g, ins
+        return scr.availableGeometry(), {"top": 0, "bottom": 0, "left": 0, "right": 0}
+
+    @staticmethod
+    def _bar_xy(edge, g):
+        return ({"top": g.center().x() - W // 2, "bottom": g.center().x() - W // 2, "left": g.left(), "right": g.right() - W + 1}[edge],
+                {"top": g.top(), "bottom": g.bottom() - H + 1, "left": g.center().y() - H // 2, "right": g.center().y() - H // 2}[edge])
+
+    def _set_inset(self, px, glide):
+        """Tell the page how far in the notch hangs; glide: it oozes there (the window itself stays put)."""
+        if px != self.bar_inset or not glide:
+            self.bar_inset = px
+            self._js(f"window.voidBarInset&&voidBarInset({px},{'true' if glide else 'false'})")
+
+    def _watch_screens(self):
+        """macOS: look again where the notch should hang whenever the menu bar or the Dock may have changed — at once,
+        and once more when a Space switch has settled. Without Cocoa's notifications, a cheap look every 2 s."""
+        self.scr_watch = ScreenWatch()
+        self.scr_watch.changed.connect(lambda: (self._screens_changed(), QTimer.singleShot(700, self._screens_changed)))
+        if not winsys.watch_screens(self.scr_watch.changed.emit):
+            log("no screen notifications — checking the menu bar and the Dock every 2 s instead")
+            self.scr_poll = QTimer(self, interval=2000, timeout=self._screens_changed)
+            self.scr_poll.start()
+
+    def _screens_changed(self):
+        if not self.bar or self.hover:
+            return
+        scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
+        g, ins = self._bar_area(scr)
+        x, y = self._bar_xy(self.bar, g)
+        if (x, y) != (self.x() + self.wide_shift, self.y()):            # (the screen itself changed)
+            self._glide_to(x, y)
+        self._set_inset(ins[self.bar], glide=True)
+
+    def _ghost_rect(self):
+        """The notch as it is on the wall (where it melts away when he's pulled out of it)."""
+        bx, y, e, i = self.x() + self.wide_shift, self.y(), self.bar, self.bar_inset
+        return {"top": (bx + 170 - 140, y + i, 280, 52), "bottom": (bx + 170 - 140, y + H - 52 - i, 280, 52),
+                "left": (bx + i, y + 230 - 115, 68, 230), "right": (bx + W - 68 - i, y + 230 - 115, 68, 230)}[e]
+
     def set_bar(self, edge, to=None, glide=True):
         """Dock on `edge` (top / bottom / left / right) of the screen he's on, or undock (None): back to the blob's
         own spot, or to `to` when he's pulled out by the mouse. Tells the page with voidDock()."""
@@ -330,11 +386,9 @@ class VoidWindow(QWidget):
                 self.bar_home = (self.x() + self.wide_shift, self.y())
             self.bar = edge
             scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
-            g = scr.availableGeometry()                                  # (the bottom edge sits above the taskbar)
-            x = {"top": g.center().x() - W // 2, "bottom": g.center().x() - W // 2,
-                 "left": g.left(), "right": g.right() - W + 1}[edge]
-            y = {"top": g.top(), "bottom": g.bottom() - H + 1,
-                 "left": g.center().y() - H // 2, "right": g.center().y() - H // 2}[edge]
+            g, ins = self._bar_area(scr)                                 # (the bottom edge sits above the taskbar)
+            x, y = self._bar_xy(edge, g)
+            self._set_inset(ins[edge], glide=False)                      # (the page eases there as he docks)
             # glide into place while the page morphs, growing the window round the notch for its glow on the way
             # (no growing the window round the notch: it flickered; the notch's glow is sized to fit the window)
             self._glide_to(x, y)
@@ -432,9 +486,8 @@ class VoidWindow(QWidget):
         self.glide_n += 1                                                # grabbed: any glide stops right here
         if self.bar:                                                     # pulling the bar away: out pops the blob,
             c = QCursor.pos()                                            # under your mouse, still being dragged
-            bx, e = self.x() + self.wide_shift, self.bar                 # the notch stays on the wall and melts away
-            nx, ny, nw, nh = {"top": (bx + 170 - 140, self.y(), 280, 52), "bottom": (bx + 170 - 140, self.y() + H - 52, 280, 52),
-                              "left": (bx, self.y() + 230 - 115, 68, 230), "right": (bx + W - 68, self.y() + 230 - 115, 68, 230)}[e]
+            e = self.bar                                                 # the notch stays on the wall and melts away
+            nx, ny, nw, nh = self._ghost_rect()
             self.set_wide(False, "bar")                                  # (first: it changes wide_shift)
             self.set_bar(None, to=(c.x() - BALL[0] - self.wide_shift, c.y() - BALL[1]))
             # (a moment later: a new window appearing right as the drag starts can upset the drag)

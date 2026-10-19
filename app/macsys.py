@@ -309,3 +309,96 @@ def no_resize(win_id):
 def mouse_down():
     """The left mouse button is held (anywhere)."""
     return bool(_cg.CGEventSourceButtonState(0, 0))                        # combined session state, left button
+
+
+# ---------------------------------------------------------------- the menu bar and the Dock, as they are right now
+class _Rect(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double), ("w", ctypes.c_double), ("h", ctypes.c_double)]
+
+
+class _Insets(ctypes.Structure):
+    _fields_ = [("top", ctypes.c_double), ("left", ctypes.c_double), ("bottom", ctypes.c_double), ("right", ctypes.c_double)]
+
+
+_appkit = ctypes.cdll.LoadLibrary(ctypes.util.find_library("AppKit"))
+DOCK_HIDDEN = 8                 # a Dock that hides itself still keeps a sliver of the screen (4 pt): that's no Dock
+
+
+def _screens():
+    """Every screen as (frame, visibleFrame, the camera housing's height), Cocoa's way: points, y up from the bottom
+    of the main screen. visibleFrame is what the menu bar and the Dock leave, as they are now: in a full-screen app's
+    Space it's the whole screen, and a Dock that hides itself (nearly) doesn't count."""
+    arr = _send(_objc.objc_getClass(b"NSScreen"), "screens")
+    out = []
+    for i in range(_send(arr, "count", restype=ctypes.c_ulong) if arr else 0):
+        s = _send(arr, "objectAtIndex:", i, argtypes=(ctypes.c_ulong,))
+        f, v = _send(s, "frame", restype=_Rect), _send(s, "visibleFrame", restype=_Rect)
+        safe = 0.0
+        if _send(s, "respondsToSelector:", _objc.sel_registerName(b"safeAreaInsets"), restype=ctypes.c_bool,
+                 argtypes=(ctypes.c_void_p,)):                            # (macOS 12+)
+            safe = _send(s, "safeAreaInsets", restype=_Insets).top
+        out.append(((f.x, f.y, f.w, f.h), (v.x, v.y, v.w, v.h), safe))
+    return out
+
+
+def edge_insets(screens, x, y, w, h):
+    """How far in from each edge of the screen whose whole frame is Qt's (x, y, w, h) (points, y down from the top of
+    the main screen) the menu bar, the Dock and a camera housing reach → {"top", "bottom", "left", "right"}, or None
+    when no screen has that frame. A notch never hangs behind the camera, even where there's no menu bar."""
+    if not screens:
+        return None
+    top0 = screens[0][0][1] + screens[0][0][3]                            # (the main screen's top: Qt's y = 0)
+    for (fx, fy, fw, fh), (vx, vy, vw, vh), safe in screens:
+        if max(abs(fx - x), abs(top0 - fy - fh - y), abs(fw - w), abs(fh - h)) >= 1:
+            continue
+        dock = lambda d: 0 if d < DOCK_HIDDEN else round(d)               # noqa: E731
+        return {"top": round(max(fy + fh - vy - vh, safe)), "bottom": dock(vy - fy), "left": dock(vx - fx),
+                "right": dock(fx + fw - vx - vw)}
+    return None
+
+
+def edge_insets_now(x, y, w, h):
+    return edge_insets(_screens(), x, y, w, h)
+
+
+_watch = {}
+
+
+def watch_screens(cb):
+    """Call cb() (on the main thread) when where the menu bar and the Dock are may have changed: another Space became
+    active (a full-screen app's, say), or the screens' usable areas changed (the Dock moved, or began or stopped
+    hiding itself; the menu bar did). → False if the observer couldn't be set up (then poll instead)."""
+    if _watch:
+        return True
+    try:
+        o = _objc
+        o.objc_allocateClassPair.restype = ctypes.c_void_p
+        o.objc_allocateClassPair.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t)
+        o.class_addMethod.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p)
+        o.objc_registerClassPair.argtypes = (ctypes.c_void_p,)
+        imp = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(lambda me, sel, note: _fire())
+        cls = o.objc_allocateClassPair(o.objc_getClass(b"NSObject"), b"VoidScreenWatch", 0)
+        if not cls:
+            return False
+        sel = o.sel_registerName(b"screensChanged:")
+        o.class_addMethod(cls, sel, ctypes.cast(imp, ctypes.c_void_p), b"v@:@")
+        o.objc_registerClassPair(cls)
+        obs = _send(_send(cls, "alloc"), "init")
+        name = lambda n: ctypes.c_void_p.in_dll(_appkit, n)                # noqa: E731  (AppKit's own NSString constants)
+        ws = _send(_send(o.objc_getClass(b"NSWorkspace"), "sharedWorkspace"), "notificationCenter")
+        nc = _send(o.objc_getClass(b"NSNotificationCenter"), "defaultCenter")
+        add = ("addObserver:selector:name:object:", (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p))
+        _send(ws, add[0], obs, sel, name("NSWorkspaceActiveSpaceDidChangeNotification"), None, restype=None, argtypes=add[1])
+        _send(nc, add[0], obs, sel, name("NSApplicationDidChangeScreenParametersNotification"), None, restype=None,
+              argtypes=add[1])
+    except (OSError, ValueError, AttributeError):
+        return False
+    _watch.update(imp=imp, obs=obs, cb=cb)                                 # (kept: Cocoa calls these for good)
+    return True
+
+
+def _fire():
+    try:
+        _watch["cb"]()
+    except Exception:  # noqa: BLE001  (never into Cocoa)
+        pass

@@ -1304,7 +1304,7 @@ let tipFor=null; const tipEl=$('#miniTip');
 function miniTip(m,e){
   if(!e){ if(tipFor===m){ tipFor=null; tipEl.classList.remove('on'); } return; }
   tipFor=m; tipEl.innerHTML=miniTipHTML(m);
-  const bx=(e.clientX-layoutX)/fitK, by=e.clientY/fitK;
+  const [ix,iy]=barInXY(), bx=(e.clientX-layoutX-ix)/fitK, by=(e.clientY-iy)/fitK;
   tipEl.style.left=clamp(bx+12,4,340-tipEl.offsetWidth-4).toFixed(0)+'px'; tipEl.style.top=clamp(by-30,4,436).toFixed(0)+'px';
   tipEl.classList.add('on');
 }
@@ -2324,19 +2324,85 @@ function melt(edge,dir,done){
     if(t<1) requestAnimationFrame(frame); else { const d=meltDone; meltDone=null; d&&d(false); }
   })(t0);
 }
+// How far in from the screen edge the notch hangs, in window px (macOS: just under the menu bar, or beside the Dock,
+// while they're really there: the window says, voidBarInset). The whole page sits that far in while he's docked, so
+// everything drawn against the edge goes with it; docking and undocking ease it in and out under the morph.
+let barIn=0, barInTo=0, barInN=0, shifting=false;
+function barInXY(){ const b=document.body.classList, e=barIn&&(b.contains('bar')||b.contains('unfold'))?EDGES.find(x=>b.contains('e-'+x)):null;
+  return !e?[0,0]:e==='top'?[0,barIn]:e==='bottom'?[0,-barIn]:e==='left'?[barIn,0]:[-barIn,0]; }
+function barInSet(v){ barIn=v; fit(); }
+function tweenIn(to,dur){ const n=++barInN, from=barIn, t0=performance.now();
+  if(RM.matches||from===to){ barInSet(to); return; }
+  (function f(now){ if(n!==barInN) return; const t=Math.min(1,(now-t0)/dur); barInSet(from+(to-from)*easeIO(t));
+    if(t<1) requestAnimationFrame(f); else sendRegion(true); })(t0); }
+// settles like the notch's own springs: past it a little, back, and still
+const barSpr=x=>x<=0?0:x>=1?1:1-Math.exp(-5.5*x)*Math.cos(9.5*x);
+// Docked, the notch moves to hang at another depth (the menu bar or the Dock came or went): never a slide or a snap,
+// the notch morph's liquid. Away from the edge it drips: a fat drop swells out of its open side and leads, the notch
+// is drawn long after it, lets go of what it hung from and wobbles to rest. Back toward the edge it's slurped up: a
+// thick tongue reaches from it to the edge, the notch is drunk up along it and wobbles to rest. His eyes ride it.
+function barShift(to){
+  const b=document.body, pl=$('#barPill'), edge=barEdge(); if(!edge){ barInSet(to); return; }
+  const n=++meltN, k=fitK||1, pf=barIn/k, pt=to/k, pd=pt-pf, t0=performance.now(), dur=720, o=24;
+  barInN++; clearTimeout(morphT); shifting=true;
+  const bar=$('#gooBar'), ball=$('#gooBall'), drop=$('#gooDrop'), horiz=edge==='top'||edge==='bottom';
+  const D=horiz?pl.offsetHeight:pl.offsetWidth, S=horiz?pl.offsetWidth:pl.offsetHeight, c=(horiz?pl.offsetLeft:pl.offsetTop)+S/2;
+  for(const el of [bar,ball,drop,...$$('.gooN')]) el.setAttribute('fill','#000');
+  $$('.gooN').forEach(el=>el.setAttribute('r',0));
+  // u: page px in from the screen's edge, a: along it → x, y on the page (which itself sits barIn in)
+  const pt2=(u,a)=>{ u-=barIn/k; return edge==='top'?[a,u]:edge==='bottom'?[a,460-u]:edge==='left'?[u,a]:[340-u,a]; };
+  const f=v=>Math.max(0,v).toFixed(1);
+  meltDone=instant=>{ shifting=false; barInSet(to); b.classList.remove('goohide'); sendRegion(true);
+    const end=()=>b.classList.remove('gooing'); if(instant) end(); else morphT=setTimeout(end,110); };
+  b.classList.add('gooing','goohide');
+  (function frame(now){
+    if(n!==meltN) return;
+    const t=Math.min(1,(now-t0)/dur);
+    let cur, top, sp=S, tg=null, dr=0;
+    if(pd>0){                                                 // drip
+      cur=pf+pd*barSpr((t-.1)/.9);
+      top=pf+pd*easeInC((t-.3)/.45)-o;                          // (it lets go up there: under the bar that came)
+      dr=Math.min(16,S*.06)*Math.sin(Math.PI*clamp(t/.5,0,1));
+    } else {                                                  // slurp
+      const up=pf+pd*easeIO(clamp((t-.18)/.42,0,1));
+      cur=pf+pd*barSpr((t-.22)/.78);
+      top=up-o*clamp(1-(up-pt)/o,0,1);                          // (as it gets there, it comes to hang from it)
+      tg=[pf+pd*easeOutC(t/.35), up+12, S*.16*smooth(t/.15)*(1-smooth((t-.45)/.2))];
+    }
+    barInSet(cur*k);
+    const bot=cur+D;
+    sp=S*(1-.12*clamp((bot-(top+o)-D)/Math.max(1,Math.abs(pd)),0,1));   // drawn long, it's thinner
+    const [x0,y0]=pt2(top,c-sp/2), [x1,y1]=pt2(bot,c+sp/2);
+    bar.setAttribute('x',f(Math.min(x0,x1))); bar.setAttribute('y',f(Math.min(y0,y1)));
+    bar.setAttribute('width',f(Math.abs(x1-x0))); bar.setAttribute('height',f(Math.abs(y1-y0)));
+    const [dx,dy]=pt2(bot+dr*.35,c); drop.setAttribute('cx',dx.toFixed(1)); drop.setAttribute('cy',dy.toFixed(1)); drop.setAttribute('r',f(dr));
+    if(tg){ const [ex,ey]=pt2((tg[0]+tg[1])/2,c), len=Math.max(0,(tg[1]-tg[0])/2);
+      ball.setAttribute('cx',ex.toFixed(1)); ball.setAttribute('cy',ey.toFixed(1));
+      ball.setAttribute('rx',f(horiz?tg[2]:len)); ball.setAttribute('ry',f(horiz?len:tg[2])); }
+    else { ball.setAttribute('rx',0); ball.setAttribute('ry',0); }
+    if(t<1) requestAnimationFrame(frame); else { const d=meltDone; meltDone=null; d&&d(false); }
+  })(t0);
+}
+// the window: the notch hangs `px` in from its edge now (glide: it moved while docked, so it oozes there)
+window.voidBarInset=(px,glide)=>{ barInTo=Math.max(0,+px||0);
+  if(!document.body.classList.contains('bar')) return;     // (not docked: that's where he'll hang when he is)
+  if(meltDone&&!shifting){ tweenIn(barInTo,300); return; } // (still flowing into the notch: it just aims there)
+  if(!glide||RM.matches){ barInN++; barInSet(barInTo); sendRegion(true); return; }
+  if(barInTo!==barIn) barShift(barInTo); };
 function setBarClass(edge,pulled){
   const b=document.body; snapMorph(); clearTimeout(morphT);
   if(!edge&&pulled&&b.classList.contains('bar')){
     // pulled out by the mouse: the notch melts away on the wall by itself (the window leaves a ghost of it there);
     // here he just pops straight out as the blob under your hand — eyes in place at once, ball bouncing in
     b.classList.add('snap'); b.classList.remove('bar','bar-done','gooing','goohide');
-    EDGES.forEach(e=>b.classList.remove('e-'+e)); b.classList.add('popout'); G.jelly.kick(.9);
+    EDGES.forEach(e=>b.classList.remove('e-'+e)); b.classList.add('popout'); G.jelly.kick(.9); barInN++; barInSet(0);
     requestAnimationFrame(()=>requestAnimationFrame(()=>b.classList.remove('snap')));
     morphT=setTimeout(()=>b.classList.remove('popout'),360);
   } else if(edge){
     b.classList.remove('unfold','bar-done','gooing','goohide');
     EDGES.forEach(e=>b.classList.toggle('e-'+e,edge===e));
     b.classList.add('gooing','goohide','bar');                  // eyes glide up; the liquid does the rest
+    tweenIn(barInTo,400);                                       // (in past the menu bar / the Dock as it flows in)
     // at the end the real notch fades in over the liquid, and only then does the liquid go
     melt(edge,1,instant=>{ b.classList.remove('goohide');
       const end=()=>{ b.classList.remove('gooing'); b.classList.add('bar-done'); };
@@ -2344,10 +2410,11 @@ function setBarClass(edge,pulled){
   } else if(b.classList.contains('bar')){
     const from=barEdge();
     b.classList.remove('bar-done'); b.classList.add('gooing','goohide','unfold'); b.classList.remove('bar'); G.jelly.kick(.6);
+    tweenIn(0,440);
     melt(from,-1,instant=>{ b.classList.remove('goohide');            // his real ball fades in over the drop…
       const end=()=>{ b.classList.remove('gooing','unfold'); EDGES.forEach(e=>b.classList.remove('e-'+e)); };
       if(instant) end(); else morphT=setTimeout(end,140); });
-  } else EDGES.forEach(e=>b.classList.remove('e-'+e));
+  } else { EDGES.forEach(e=>b.classList.remove('e-'+e)); if(barIn){ barInN++; barInSet(0); } }
   const l=$('[data-a="bar"] span'); if(l) l.textContent=edge?'blob':'top bar'; sendRegion(true);
 }
 window.voidDock=(edge,how)=>{ edge=EDGES.includes(edge)?edge:''; if(menuOn) menu(false); setBarClass(edge,how==='pull'); info.presence=edge?'bar':'orb'; info.bar_edge=edge||info.bar_edge;
@@ -2700,7 +2767,8 @@ function calmCheck(){ document.body.classList.toggle('calm', setEl.classList.con
 let fitK=1, layoutX=0;
 function fit(){ const k=Math.min(1, innerWidth/340, innerHeight/460); fitK=k>0.995?1:k; const bs=document.body.style;
   bs.transformOrigin='0 0'; bs.margin='0'; bs.marginLeft=layoutX+'px';
-  bs.transform=fitK===1?'':`scale(${fitK})`;
+  const [ix,iy]=barInXY();                        // (in the notch: in from the edge, past the menu bar or the Dock)
+  bs.transform=((ix||iy?`translate(${ix}px,${iy}px)`:'')+(fitK===1?'':` scale(${fitK})`)).trim();
   if(NATIVE&&fitK<1) console.log(`[void] window is ${innerWidth}x${innerHeight} (expected 340x460) — scaling the page to fit`); }
 // the window widened for a panel: it grew to the left by ox px, so shift the page back and he stays exactly where he was
 window.voidLayout=ox=>{ layoutX=ox|0; fit(); sendRegion(true); requestAnimationFrame(moveInd); };
