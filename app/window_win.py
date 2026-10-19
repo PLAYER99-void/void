@@ -251,11 +251,13 @@ class VoidWindow(QWidget):
 
     # ---- only Void sizes his window (macOS tiling would squash him into half the screen)
     def _mac_native(self):
-        """The Cocoa side of his window: on every Space, and not resizable by you or by macOS."""
+        """The Cocoa side of his window: on every Space, not resizable by you or by macOS, and not pushed down off the
+        top edge by macOS (docked up there, the notch hangs exactly as far in as the page says)."""
         if not self.internalWinId():                                     # (gone: don't make a new one just for this)
             return
         winsys.keep_on_all_spaces(self.winId())
         winsys.no_resize(self.winId())
+        winsys.unconstrained(self.winId())
 
     def event(self, ev):
         # Qt puts Resizable back when the window's flags change (which needs a show after) or the NSWindow is rebuilt

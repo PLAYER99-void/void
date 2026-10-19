@@ -3,6 +3,7 @@ resize he didn't ask for is put straight back. Qt's offscreen platform and a fak
 
     python3 -m unittest discover -s tests
 """
+import ctypes
 import os
 import sys
 import unittest
@@ -58,13 +59,16 @@ class NoResize(unittest.TestCase):
 
 class FakeCocoa:
     def __init__(self):
-        self.no_resize, self.spaces = 0, 0
+        self.no_resize, self.spaces, self.free = 0, 0, 0
 
     def keep_on_all_spaces(self, win_id):
         self.spaces += 1
 
     def no_resize_(self, win_id):
         self.no_resize += 1
+
+    def unconstrained(self, win_id):
+        self.free += 1
 
 
 @unittest.skipUnless(MAC and window_win, "macOS with PySide6 only")
@@ -78,7 +82,7 @@ class Unresize(unittest.TestCase):
     def setUp(self):
         self.cocoa = FakeCocoa()
         fake = type("Cocoa", (), {"keep_on_all_spaces": self.cocoa.keep_on_all_spaces,
-                                  "no_resize": self.cocoa.no_resize_})
+                                  "no_resize": self.cocoa.no_resize_, "unconstrained": self.cocoa.unconstrained})
         self.saved = window_win.winsys
         window_win.winsys = fake
         js = self.js = []
@@ -98,7 +102,7 @@ class Unresize(unittest.TestCase):
         self.win = Win()
         self.win.show()
         self.settle()
-        self.cocoa.no_resize = 0
+        self.cocoa.no_resize = self.cocoa.free = 0
 
     def tearDown(self):
         self.win.close()
@@ -138,6 +142,7 @@ class Unresize(unittest.TestCase):
         self.win.show()
         self.settle()
         self.assertGreaterEqual(self.cocoa.no_resize, 1)
+        self.assertGreaterEqual(self.cocoa.free, 1)                      # (and AppKit mayn't push him off the top)
 
 
 @unittest.skipUnless(MAC, "macOS only")
@@ -176,6 +181,101 @@ class EdgeInsets(unittest.TestCase):
         self.assertIsNone(macsys.edge_insets(scr, 5000, 0, 1920, 1080))
         self.assertIsNone(macsys.edge_insets([], 0, 0, 3840, 2160))
 
+    # what an Odyssey G8 (3840x2160 at 1x) really read: visibleFrame keeps the menu bar's and the Dock's room in a
+    # full-screen app's Space too, where neither one's window is on screen; on a desktop both are
+    DESKTOP = [("menu", (0, 0, 3840, 30)), ("dock", (0, 0, 3840, 2160))]
+
+    def test_full_screen_space_flush_though_visible_frame_keeps_room(self):
+        self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 92, 3840, 2038), 0.0)], 0, 0, 3840, 2160, []),
+                         {"top": 0, "bottom": 0, "left": 0, "right": 0})
+
+    def test_desktop_space_under_the_menu_bar_and_beside_the_dock(self):
+        self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 92, 3840, 2038), 0.0)], 0, 0, 3840, 2160, self.DESKTOP),
+                         {"top": 30, "bottom": 92, "left": 0, "right": 0})
+
+    def test_menu_bar_auto_hidden_dock_still_there(self):
+        self.assertEqual(macsys.edge_insets([(self.MAIN, (0, 92, 3840, 2038), 0.0)], 0, 0, 3840, 2160,
+                                            self.DESKTOP[1:]), {"top": 0, "bottom": 92, "left": 0, "right": 0})
+
+    def test_bars_on_another_screen_dont_count(self):
+        upper = ((-500, 2160, 1920, 1080), (-500, 2160, 1920, 1055), 0.0)
+        scr = [(self.MAIN, (0, 92, 3840, 2038), 0.0), upper]
+        self.assertEqual(macsys.edge_insets(scr, -500, -1080, 1920, 1080, self.DESKTOP)["top"], 0)
+        here = self.DESKTOP + [("menu", (-500, -1080, 1920, 25))]
+        self.assertEqual(macsys.edge_insets(scr, -500, -1080, 1920, 1080, here)["top"], 25)
+        self.assertEqual(macsys.edge_insets(scr, 0, 0, 3840, 2160, [("menu", (-500, -1080, 1920, 25))])["top"], 0)
+
+    def test_full_screen_space_still_never_behind_the_camera(self):
+        built_in = (0, 0, 1512, 982)
+        self.assertEqual(macsys.edge_insets([(built_in, (0, 0, 1512, 945), 32.0)], 0, 0, 1512, 982, [])["top"], 32)
+
+    def test_bars_read_from_the_window_list(self):
+        bars = macsys._bars()                                            # (whatever this Mac shows: the shape of it)
+        self.assertIsInstance(bars, list)
+        for kind, r in bars:
+            self.assertIn(kind, ("menu", "dock"))
+            self.assertEqual(len(r), 4)
+
+
+@unittest.skipUnless(MAC, "macOS only")
+class Unconstrained(unittest.TestCase):
+    """macsys.unconstrained: AppKit hands a window's frame back as asked (flush with the top, or off the screen), not
+    pushed down under where the menu bar would be. On a panel class of its own that's never shown."""
+
+    @classmethod
+    def setUpClass(cls):
+        o, send = macsys._objc, macsys._send
+        o.objc_allocateClassPair.restype = ctypes.c_void_p
+        o.objc_allocateClassPair.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t)
+        o.objc_registerClassPair.argtypes = (ctypes.c_void_p,)
+        send(o.objc_getClass(b"NSApplication"), "sharedApplication")
+        cls.made = []
+        for name, mask in ((b"VoidTestPanel", 0x6), (b"VoidTestTitled", 0x7)):   # (no_resize's mask; and titled)
+            k = o.objc_getClass(name)
+            if not k:
+                k = o.objc_allocateClassPair(o.objc_getClass(b"NSPanel"), name, 0)
+                o.objc_registerClassPair(k)
+            init = "initWithContentRect:styleMask:backing:defer:"
+            cls.made.append(send(send(k, "alloc"), init, macsys._Rect(100, 100, 340, 460), mask, 2, True,
+                                 argtypes=(macsys._Rect, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_bool)))
+        cls.panel, cls.titled = cls.made
+        cls.scr = send(o.objc_getClass(b"NSScreen"), "mainScreen")
+        cls.saved = macsys._nswindow
+        macsys._nswindow = lambda win_id: ctypes.c_void_p(win_id) if win_id else None
+
+    @classmethod
+    def tearDownClass(cls):
+        macsys._nswindow = cls.saved
+        for w in cls.made:
+            macsys._send(w, "close", restype=None)
+
+    def constrain(self, w, r):
+        r = macsys._send(w, "constrainFrameRect:toScreen:", macsys._Rect(*r), self.scr, restype=macsys._Rect,
+                         argtypes=(macsys._Rect, ctypes.c_void_p))
+        return r.x, r.y, r.w, r.h
+
+    def test_flush_with_the_top_and_off_screen_stay_put(self):
+        if not self.scr:
+            self.skipTest("no screen")
+        f = macsys._send(self.scr, "frame", restype=macsys._Rect)
+        top = (f.x + 100, f.y + f.h - 460, 340, 460)
+        macsys.unconstrained(self.panel)
+        self.assertEqual(self.constrain(self.panel, top), top)
+        self.assertEqual(self.constrain(self.panel, (f.x - 200, f.y + f.h - 100, 340, 460)),
+                         (f.x - 200, f.y + f.h - 100, 340, 460))
+
+    def test_titled_left_alone(self):
+        macsys.unconstrained(self.titled)
+        sel = macsys._objc.sel_registerName(b"constrainFrameRect:toScreen:")
+        o = macsys._objc
+        o.class_getInstanceMethod.restype = ctypes.c_void_p
+        o.class_getInstanceMethod.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+        own = o.class_getInstanceMethod(o.objc_getClass(b"VoidTestTitled"), sel)
+        self.assertEqual(own, o.class_getInstanceMethod(o.objc_getClass(b"NSPanel"), sel))   # (only inherited)
+
+    def test_no_native_window(self):
+        macsys.unconstrained(0)                                          # (nothing to do, and no crash)
+
 
 @unittest.skipUnless(MAC and window_win, "macOS with PySide6 only")
 class BarInset(unittest.TestCase):
@@ -191,6 +291,7 @@ class BarInset(unittest.TestCase):
         self.insets = {"top": 30, "bottom": 92, "left": 0, "right": 0}
         self.watching = []
         fake = type("Cocoa", (), {"keep_on_all_spaces": staticmethod(lambda w: None), "no_resize": staticmethod(lambda w: None),
+                                  "unconstrained": staticmethod(lambda w: None),
                                   "edge_insets_now": staticmethod(lambda x, y, w, h: dict(test.insets)),
                                   "watch_screens": staticmethod(lambda cb: test.watching.append(cb) or True)})
         self.saved = window_win.winsys

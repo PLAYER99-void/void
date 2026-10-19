@@ -306,6 +306,29 @@ def no_resize(win_id):
         _send(w, "setStyleMask:", mask & ~8, restype=None, argtypes=(ctypes.c_ulong,))
 
 
+def unconstrained(win_id):
+    """His window goes exactly where Void puts it, flush with the top of the screen too. AppKit otherwise pushes any
+    window that reaches above where the menu bar would be back down under it (constrainFrameRect:toScreen:, whenever
+    it's shown or the Space changes), menu bar or not: over a full-screen app he'd hang a bar's height down with no
+    bar there. The override AppKit documents for this, for Qt's window class (so his notch's ghost too): it hands
+    the frame back as asked. ctypes can't return a CGRect from Python, so the method is NSWindow's own
+    frameRectForContentRect:, which takes the same rect first (the screen after it is ignored) and, for a window
+    with no title bar, returns it unchanged."""
+    w = _nswindow(win_id)
+    if not w or _send(w, "styleMask", restype=ctypes.c_ulong) & 1:        # (titled: that method would add a title bar)
+        return
+    o = _objc
+    o.class_getInstanceMethod.restype = o.method_getImplementation.restype = ctypes.c_void_p
+    o.class_getInstanceMethod.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    o.method_getImplementation.argtypes = (ctypes.c_void_p,)
+    o.class_addMethod.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p)
+    same = o.method_getImplementation(o.class_getInstanceMethod(o.objc_getClass(b"NSWindow"),
+                                                                o.sel_registerName(b"frameRectForContentRect:")))
+    rect = b"{CGRect={CGPoint=dd}{CGSize=dd}}"
+    o.class_addMethod(_send(w, "class"), o.sel_registerName(b"constrainFrameRect:toScreen:"), same,
+                      rect + b"@:" + rect + b"@")                          # (once per class: then it's there already)
+
+
 def mouse_down():
     """The left mouse button is held (anywhere)."""
     return bool(_cg.CGEventSourceButtonState(0, 0))                        # combined session state, left button
@@ -326,8 +349,8 @@ DOCK_HIDDEN = 8                 # a Dock that hides itself still keeps a sliver 
 
 def _screens():
     """Every screen as (frame, visibleFrame, the camera housing's height), Cocoa's way: points, y up from the bottom
-    of the main screen. visibleFrame is what the menu bar and the Dock leave, as they are now: in a full-screen app's
-    Space it's the whole screen, and a Dock that hides itself (nearly) doesn't count."""
+    of the main screen. visibleFrame is what the menu bar and the Dock leave, and a Dock that hides itself (nearly)
+    doesn't count — but in a full-screen app's Space it still keeps their room, though neither is there."""
     arr = _send(_objc.objc_getClass(b"NSScreen"), "screens")
     out = []
     for i in range(_send(arr, "count", restype=ctypes.c_ulong) if arr else 0):
@@ -341,24 +364,66 @@ def _screens():
     return out
 
 
-def edge_insets(screens, x, y, w, h):
+_cg.CGWindowListCopyWindowInfo.restype = ctypes.c_void_p
+_cg.CGWindowListCopyWindowInfo.argtypes = (ctypes.c_uint32, ctypes.c_uint32)
+_cg.CGRectMakeWithDictionaryRepresentation.restype = ctypes.c_bool
+_cg.CGRectMakeWithDictionaryRepresentation.argtypes = (ctypes.c_void_p, ctypes.POINTER(_Rect))
+_cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+_cf.CFRelease.argtypes = (ctypes.c_void_p,)
+MENU_BAR_LAYER, DOCK_LAYER = 24, 20                                       # kCGMainMenuWindowLevel, kCGDockWindowLevel
+
+
+def _bars():
+    """The menu bars and the Dock as they're really drawn right now: [("menu" | "dock", (x, y, w, h))], Qt's way
+    (points, y down from the top of the main screen), from the windows on screen; None if those can't be had. In a
+    full-screen app's Space neither one's window is on screen (each comes only when you reach for it)."""
+    info = _cg.CGWindowListCopyWindowInfo(1, 0)                           # kCGWindowListOptionOnScreenOnly, every window
+    if not info:
+        return None
+    key = lambda n: ctypes.c_void_p.in_dll(_cg, n)                        # noqa: E731  (CoreGraphics' own CFString keys)
+    get = lambda d, k: _send(d, "objectForKey:", key(k), argtypes=(ctypes.c_void_p,))   # noqa: E731
+    out = []
+    try:
+        for i in range(_send(info, "count", restype=ctypes.c_ulong)):
+            d = _send(info, "objectAtIndex:", i, argtypes=(ctypes.c_ulong,))
+            layer = _send(get(d, "kCGWindowLayer"), "intValue", restype=ctypes.c_int)
+            if layer not in (MENU_BAR_LAYER, DOCK_LAYER):
+                continue
+            owner = _send(get(d, "kCGWindowOwnerName"), "UTF8String", restype=ctypes.c_char_p) or b""
+            r = _Rect()
+            if (layer == MENU_BAR_LAYER or owner == b"Dock") and \
+                    _cg.CGRectMakeWithDictionaryRepresentation(get(d, "kCGWindowBounds"), ctypes.byref(r)):
+                out.append(("menu" if layer == MENU_BAR_LAYER else "dock", (r.x, r.y, r.w, r.h)))
+    finally:
+        _cf.CFRelease(info)
+    return out
+
+
+def edge_insets(screens, x, y, w, h, bars=None):
     """How far in from each edge of the screen whose whole frame is Qt's (x, y, w, h) (points, y down from the top of
     the main screen) the menu bar, the Dock and a camera housing reach → {"top", "bottom", "left", "right"}, or None
-    when no screen has that frame. A notch never hangs behind the camera, even where there's no menu bar."""
+    when no screen has that frame. bars (from _bars()): the menu bar only counts while one is on screen at this
+    screen's top, the Dock only while its window is on this screen (visibleFrame keeps both over a full-screen app);
+    None → visibleFrame alone. A notch never hangs behind the camera, even where there's no menu bar."""
     if not screens:
         return None
     top0 = screens[0][0][1] + screens[0][0][3]                            # (the main screen's top: Qt's y = 0)
     for (fx, fy, fw, fh), (vx, vy, vw, vh), safe in screens:
         if max(abs(fx - x), abs(top0 - fy - fh - y), abs(fw - w), abs(fh - h)) >= 1:
             continue
-        dock = lambda d: 0 if d < DOCK_HIDDEN else round(d)               # noqa: E731
-        return {"top": round(max(fy + fh - vy - vh, safe)), "bottom": dock(vy - fy), "left": dock(vx - fx),
-                "right": dock(fx + fw - vx - vw)}
+        menu = has_dock = True
+        if bars is not None:
+            on = lambda bx, by, bw, bh: bx < x + w and bx + bw > x and by < y + h and by + bh > y   # noqa: E731
+            menu = any(k == "menu" and abs(r[1] - y) < 1 and on(*r) for k, r in bars)
+            has_dock = any(k == "dock" and on(*r) for k, r in bars)
+        dock = lambda d: 0 if not has_dock or d < DOCK_HIDDEN else round(d)   # noqa: E731
+        return {"top": round(max(fy + fh - vy - vh if menu else 0, safe)), "bottom": dock(vy - fy),
+                "left": dock(vx - fx), "right": dock(fx + fw - vx - vw)}
     return None
 
 
 def edge_insets_now(x, y, w, h):
-    return edge_insets(_screens(), x, y, w, h)
+    return edge_insets(_screens(), x, y, w, h, _bars())
 
 
 _watch = {}
