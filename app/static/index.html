@@ -2303,8 +2303,9 @@ function dropSync(){
 // the notch's halo: hearing you (with your voice level) vs him speaking
 function convoCheck(){
   if(!document.body.classList.contains('bar')){ const p=$('#barPill');
-    if(p.style.height||p.style.width||p.classList.contains('big')){ p.style.height=p.style.width=p.style.marginTop=p.style.marginLeft=''; p.classList.remove('big');
-      for(const el of [$('#code'),$('#cap')]) el.style.width=el.style.left=el.style.top=''; }
+    if(p.style.height||p.style.width||p.classList.contains('big')){ p.style.height=p.style.width=p.style.marginTop=p.style.marginLeft=''; p.classList.remove('big'); }
+    // (on its own: the top notch with nothing showing leaves the pill unsized, but dropSync placed these anyway)
+    for(const el of [$('#code'),$('#cap')]) if(el.style.top) el.style.width=el.style.left=el.style.top='';
     return; }
   dropSync();
   const hearing=!!(rec||follow), b=document.body;
