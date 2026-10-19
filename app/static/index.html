@@ -1321,7 +1321,7 @@ function miniEnd(m,status,ts){
   miniMerge(m,ts);
 }
 function miniMerge(m,ts){ const rm=RM.matches;
-  m.st='merge'; m.t0=ts; m.from=null; m.dur=rm?(m.status==='done'?300:600):(m.status==='done'?650:1150);
+  m.st='merge'; m.t0=ts; m.from=null; m.dur=rm?(m.status==='done'?300:600):(m.status==='done'?1100:1500);
   if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
 function miniGone(m){
   if(m.goo) m.goo.forEach(c=>c.remove());
@@ -1357,13 +1357,15 @@ function orbDraw(m,ts,dt,p,rm,goo){
     x=Math.cos(m.node)*r; y=Math.sin(m.node)*r; op=smooth((p-.25)/.3);
     gp={x,y,r:MINI_R*(.45+.55*smooth(p/.45)),neck:MINI_R*(.75-.35*clamp((p-.4)/.4,0,1))*(1-smooth((p-.72)/.12))}; }
   else if(m.st==='merge'){
-    if(!m.from){ const [a0,b0,c0]=orbitPos(m,m.th), a=Math.atan2(b0,a0); m.from=[a0,b0,c0,a,Math.max(96,Math.hypot(a0,b0))]; }
-    const [a0,b0,c0,a,d]=m.from, ea=easeIO(clamp(p/.35,0,1));
-    x=lerp(a0,Math.cos(a)*d,ea); y=lerp(b0,Math.sin(a)*d,ea); z=lerp(c0,0,ea);           // out to the side of him first
-    if(p>.35){ const pb=(p-.35)/.65, r=lerp(d,38,easeInC(pb)); x=Math.cos(a)*r; y=Math.sin(a)*r;   // then drawn in
-      op=1-smooth((pb-.3)/.35); gp={x,y,r:MINI_R*(1-.45*smooth((pb-.55)/.45)),neck:MINI_R*.62*smooth(pb/.25)}; } }
+    if(!m.from){ const [a0,b0,c0]=orbitPos(m,m.th), a=Math.atan2(b0,a0); m.from=[a0,b0,c0,a,Math.max(112,Math.hypot(a0,b0))]; }
+    const [a0,b0,c0,a,d]=m.from, ea=easeIO(clamp(p/.3,0,1));
+    x=lerp(a0,Math.cos(a)*d,ea); y=lerp(b0,Math.sin(a)*d,ea); z=lerp(c0,0,ea);           // out to the side of him first,
+    const nk=smooth((p-.12)/.2);                                                            // while a thin neck reaches out to it
+    if(p>.3){ const r=p<.75?lerp(d,84,easeInC((p-.3)/.45)):lerp(84,48,easeIO((p-.75)/.25)); x=Math.cos(a)*r; y=Math.sin(a)*r; }   // reeled in, then sunk
+    op=1-smooth((p-.72)/.18);
+    gp={x,y,r:MINI_R*(1-.55*smooth((p-.75)/.25)),neck:nk*MINI_R*(.4+.35*smooth((p-.3)/.45))}; }
   else [x,y,z]=orbitPos(m,m.th);
-  if(gp&&!goo){ op=m.st==='bud'?easeOutC(p):p>.35?1-(p-.35)/.65:1; k=m.st==='bud'?.4+.6*easeOutC(p):1; gp=null; }   // (glow off: no goo)
+  if(gp&&!goo){ op=m.st==='bud'?easeOutC(p):p>.3?1-(p-.3)/.7:1; k=m.st==='bud'?.4+.6*easeOutC(p):1; gp=null; }   // (glow off: no goo)
   k*=1+z/m.R*.18+.15*Math.exp(-(ts-m.tickAt)/180);
   const back=z<0; if(back!==m.back){ (back?ML.back:ML.front).appendChild(m.el); m.back=back; }
   m.el.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)}) scale(${k.toFixed(3)})`);
