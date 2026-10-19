@@ -13,6 +13,7 @@ import threading
 import time
 from pathlib import Path
 
+import winsys
 from winsys import ChannelPick, Mic, Player, can_play, list_mics  # noqa: F401  (sounddevice: the same on both)
 
 NO_WINDOW = 0                   # (Windows' CREATE_NO_WINDOW: nothing to hide here)
@@ -48,6 +49,38 @@ def config_dir():
 
 def cache_dir():
     return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "void"
+
+
+# ---------------------------------------------------------------- which speakers and mics there are (Core Audio's own)
+class _Addr(ctypes.Structure):
+    _fields_ = [("sel", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("elem", ctypes.c_uint32)]
+
+
+_ca = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreAudio"))
+_ca.AudioObjectGetPropertyDataSize.argtypes = (ctypes.c_uint32, ctypes.POINTER(_Addr), ctypes.c_uint32, ctypes.c_void_p,
+                                               ctypes.POINTER(ctypes.c_uint32))
+_ca.AudioObjectGetPropertyData.argtypes = (ctypes.c_uint32, ctypes.POINTER(_Addr), ctypes.c_uint32, ctypes.c_void_p,
+                                           ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p)
+
+
+def _ca_ids(sel):
+    """A device-list property of the whole audio system ('dOut', 'dIn ', 'dev#') → its device ids."""
+    a, n = _Addr(int.from_bytes(sel.encode(), "big"), int.from_bytes(b"glob", "big"), 0), ctypes.c_uint32(0)
+    if _ca.AudioObjectGetPropertyDataSize(1, ctypes.byref(a), 0, None, ctypes.byref(n)):
+        raise OSError(f"Core Audio won't say ({sel})")
+    ids = (ctypes.c_uint32 * (n.value // 4))()
+    if _ca.AudioObjectGetPropertyData(1, ctypes.byref(a), 0, None, ctypes.byref(n), ids):
+        raise OSError(f"Core Audio won't say ({sel})")
+    return tuple(ids[:n.value // 4])
+
+
+def audio_devices():
+    """(default output, default input, every device): it changes whenever a speaker or mic comes, goes or is picked.
+    Asked of Core Audio itself (~50 µs), since PortAudio's own list is the one it read when it started."""
+    return _ca_ids("dOut"), _ca_ids("dIn "), _ca_ids("dev#")
+
+
+winsys.devices = audio_devices                         # (so a Player or Mic opens on the list as it is now)
 
 
 # ---------------------------------------------------------------- microphone level (Core Audio's own: not yet)

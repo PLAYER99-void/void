@@ -1092,7 +1092,10 @@ def open_mic():
     """Start the first recorder that actually produces audio. Returns (mic, name, first_bytes)."""
     if OSYS:
         mic = OSYS.Mic(RATE, CFG.get("mic_device"))
-        first = mic.read(2.5)
+        try:
+            first = mic.read(2.5)
+        except EOFError:                   # (it never called back, even on a fresh device list)
+            first = b""
         if not first:
             mic.close()
             raise RuntimeError("couldn't open the mic — no sound came in (Settings → Privacy → Microphone?)")
