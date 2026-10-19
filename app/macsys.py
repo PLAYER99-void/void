@@ -295,6 +295,17 @@ def keep_on_all_spaces(win_id):
     _send(w, "setHidesOnDeactivate:", False, restype=None, argtypes=(ctypes.c_bool,))
 
 
+def no_resize(win_id):
+    """Neither you nor macOS can resize the window: drag it to a screen edge or corner and Sequoia offers to tile it
+    into half the screen, which leaves him a box. Resizing and moving it from code (setFrame) still work."""
+    w = _nswindow(win_id)
+    if not w:
+        return
+    mask = _send(w, "styleMask", restype=ctypes.c_ulong)
+    if mask & 8:                                                          # NSWindowStyleMaskResizable
+        _send(w, "setStyleMask:", mask & ~8, restype=None, argtypes=(ctypes.c_ulong,))
+
+
 def mouse_down():
     """The left mouse button is held (anywhere)."""
     return bool(_cg.CGEventSourceButtonState(0, 0))                        # combined session state, left button

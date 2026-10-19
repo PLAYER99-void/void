@@ -32,7 +32,7 @@ for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF
         _s.reconfigure(encoding="utf-8", errors="replace")
 
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--autoplay-policy=no-user-gesture-required")
-from PySide6.QtCore import QFile, QIODevice, QObject, Qt, QTimer, QUrl, Signal, Slot  # noqa: E402
+from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, Qt, QTimer, QUrl, Signal, Slot  # noqa: E402
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QIcon, QPainter  # noqa: E402
 from PySide6.QtWebChannel import QWebChannel  # noqa: E402
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings  # noqa: E402
@@ -162,8 +162,9 @@ class VoidWindow(QWidget):
         self.setWindowIcon(QIcon(str(APP / "static" / "icon.png")))
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.resize(W, H)
         self.cur_w, self.wide_shift, self.want_panel, self.want_code = W, 0, False, False
+        self.own_pos, self.unresize_due = None, False                    # his last spot at his own size (see resizeEvent)
+        self.resize(W, H)
         self.hover, self.hpos, self.home, self.rects, self.through = False, None, None, None, None
         self.bar, self.bar_home = False, None                                # top bar: his eyes in a notch up top
         self.want_bar, self.glide_n = False, 0                               # (room for the notch's glow; current glide)
@@ -204,7 +205,7 @@ class VoidWindow(QWidget):
         self._load_pos()
         self.show()
         if MAC:
-            winsys.keep_on_all_spaces(self.winId())
+            self._mac_native()
         self.remote = Remote()
         self.remote.cmd.connect(self._remote_cmd)
         threading.Thread(target=self._serve, daemon=True).start()
@@ -235,9 +236,45 @@ class VoidWindow(QWidget):
         self.move(x, y)
 
     def moveEvent(self, ev):
+        if (self.width(), self.height()) == (self.cur_w, H):              # (not mid-way through someone else's resize)
+            self.own_pos = (self.x(), self.y())
         if not self.hover and not self.bar:
             self.save_t.start()
         super().moveEvent(ev)
+
+    # ---- only Void sizes his window (macOS tiling would squash him into half the screen)
+    def _mac_native(self):
+        """The Cocoa side of his window: on every Space, and not resizable by you or by macOS."""
+        if not self.internalWinId():                                     # (gone: don't make a new one just for this)
+            return
+        winsys.keep_on_all_spaces(self.winId())
+        winsys.no_resize(self.winId())
+
+    def event(self, ev):
+        # Qt puts Resizable back when the window's flags change (which needs a show after) or the NSWindow is rebuilt
+        # (a new id); a moment later, once the NSWindow is up
+        if MAC and ev.type() in (QEvent.Show, QEvent.WinIdChange):
+            QTimer.singleShot(0, self._mac_native)
+        return super().event(ev)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if MAC and (ev.size().width(), ev.size().height()) != (self.cur_w, H) and not self.unresize_due:
+            self.unresize_due = True                                      # every size of his own sets cur_w first
+            QTimer.singleShot(0, self._unresize)
+
+    def _unresize(self):
+        """Something else resized him (tiling got through anyway): straight back to his own size and spot, the page
+        at full size, before he's left a box in half the screen with his page scaled to fit it."""
+        self.unresize_due = False
+        w, h = self.width(), self.height()
+        if (w, h) == (self.cur_w, H):
+            return
+        x, y = self.own_pos or (self.x(), self.y())
+        log(f"window resized to {w}x{h} from outside — back to {self.cur_w}x{H}")
+        self.setGeometry(x, y, self.cur_w, H)
+        self._mac_native()
+        self._js(f"window.voidLayout&&voidLayout({self.wide_shift})")
 
     def _save_pos(self):
         try:
