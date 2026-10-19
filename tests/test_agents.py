@@ -198,6 +198,16 @@ class Routing(unittest.TestCase):
         self.assertEqual([e["text"] for e in bus(out, "followup")], ["It finished."])
         self.assertEqual(to_ask(out), [])
 
+    def test_follow_up_announced_when_its_subagent_ends(self):
+        s = agents.Stream()
+        feed(s, init(), started("t1", "r1"), started("t2", "r2", bg=False), result("ok"))
+        out = feed(s, notified("t1"), notified("t2"))
+        self.assertEqual(bus(out, "followup_soon"), [{"t": "followup_soon", "id": "t1"}])   # (not for a foreground one)
+        s = agents.Stream()
+        feed(s, init(), started("t1", "r1"), result("ok"))
+        s.stop_all()
+        self.assertEqual(bus(s.feed(notified("t1", "stopped")), "followup_soon"), [])        # nor one Void stopped
+
     def test_follow_up_for_a_subagent_void_stopped_is_not_said(self):
         s = agents.Stream()
         feed(s, init(), started("t1", "r1"), result("ok"))

@@ -1702,8 +1702,9 @@ function onEvent(ev){
   if(ev.t==='sub_start'){ miniAdd(ev); return; }
   if(ev.t==='sub_tick'){ miniTick(ev); return; }
   if(ev.t==='sub_wait'){ miniWait(ev); return; }
-  if(ev.t==='sub_end'){ miniEndEv(ev); return; }
-  if(ev.t==='followup'){ followQ.push(ev); followTry(); return; }
+  if(ev.t==='sub_end'){ miniEndEv(ev); wake(); return; }
+  if(ev.t==='followup_soon'){ wake(); if(!busy) poke('thinking',30000); return; }   // a helper is back: he's mulling it over (its words come with the followup)
+  if(ev.t==='followup'){ if(transient==='thinking') transient=null; followQ.push(ev); followTry(); return; }
   if(ev.t==='saw'){ poke('looking',1800); wake(); return; }   // Claude took a look at your screen (`void see`)
   if(ev.t==='follow'){ follow=!!ev.on; hearRaw=0; if(follow) wake(); return; }
   if(ev.t==='hear'){ hearRaw=ev.v; return; }
@@ -1733,7 +1734,7 @@ function onEvent(ev){
 /* ================= mic (recorded by the server — no browser permissions involved) ================= */
 async function startRec(mode){
   if(rec||transcribing||(busy&&mode!=='approve')) return null;
-  if(mode!=='approve') shush();
+  if(mode!=='approve'){ if(followCur){ followQ.unshift(followCur); followCur=null; clearTimeout(followT); followT=setTimeout(followTry,600); } shush(); }   // (a helper's result you cut off: told again after)
   wake(); hideAsk(); menu(false);
   const r=rec={mode,stopping:false,opened:false,cancelled:false};
   if(mode!=='approve'){ capShow(); setYou('listening…'); himSet(''); sfx('wake'); }
@@ -1991,7 +1992,7 @@ async function send(text,opts={}){
 /* a helper's result, told unasked ("the search finished, here's what it found"). Never over you or over himself: it
    waits while you talk, he talks, records, works on something or asks you something, then plays. Hidden: a
    notification instead (or he pops up first, if "pop up when done" is on). */
-const followQ=[]; let followT=null;
+const followQ=[]; let followT=null, followCur=null;   // followCur: the one he's telling now (until he's said it)
 function followTry(){
   clearTimeout(followT); followT=null; if(!followQ.length) return;
   if(hiddenNow&&!info.popup_done){ const f=followQ.shift();
@@ -2001,11 +2002,11 @@ function followTry(){
   const typing=ask.classList.contains('on')&&input.value.trim();
   if(busy||playing||rec||transcribing||follow||pendingAppr||pwReq||q.length||spkMap.size||typing){ followT=setTimeout(followTry,400); return; }
   const f=followQ.shift(), raw=plain(f.text||'').trim();
-  if(raw){ capShow(); setYou(''); himSet(''); sfx('remind');
+  if(raw){ followCur=f; wake(); capShow(); setYou(''); himSet(''); sfx('remind');
     if(voiced()){ let fresh=true; for(const s of raw.match(/[^.!?]+(?:[.!?]+|$)\s*/g)||[raw]) if(s.trim()){ enqueue(untag(s),{cap:s,fresh}); fresh=false; } }
     else { himSet(untag(raw)); enqueue(untag(raw)); }
     capQuiet(); lastAnswer=untag(f.text).trim(); moreEl.classList.toggle('on',lastAnswer.length>220||/```/.test(lastAnswer));
-    whenQuiet(()=>poke(f.ok===false?'sad':'happy',1500)); }
+    whenQuiet(()=>{ if(followCur!==f) return; followCur=null; poke(f.ok===false?'sad':'happy',1500); }); }
   if(followQ.length) followT=setTimeout(followTry,600);
 }
 

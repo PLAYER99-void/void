@@ -187,6 +187,8 @@ class Stream:
                 out.append(("bus", {"t": "sub_end", "id": t["id"], "status": sub_status(o.get("status"))}))
                 if t["bg"] and t["run"]:            # Claude Code will take a turn of its own to tell about it
                     self.awaiting[t["run"]] = 0
+                    if not self.oneshot and t["run"] not in self.void_stopped:   # (its words are held till then: the page wakes him now)
+                        out.append(("bus", {"t": "followup_soon", "id": t["id"]}))
         elif st == "background_tasks_changed":
             # a backstop: a background subagent that's gone from the list without a notification has ended
             live = {x.get("task_id") for x in o.get("tasks") or [] if isinstance(x, dict)}
