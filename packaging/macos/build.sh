@@ -32,6 +32,9 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$WORK/Void.iconset" -o "$RES/Void.icns"
 
+# only what Void runs: the Qt it imports (and what that links), arm64 only, no pip / Tk / headers / tests / tools
+"$PY" -I packaging/macos/slim.py "$RES"
+
 # bytecode now, so nothing is ever written into the signed bundle (the launcher also turns writing it off)
 find "$RES" -name __pycache__ -type d -prune -exec rm -rf {} +
 "$PY" -m compileall -q -j "$JOBS" --invalidation-mode unchecked-hash "$RES/python/lib" "$RES/app" >/dev/null || true
@@ -56,5 +59,8 @@ HOME="$WORK/home" XDG_DATA_HOME="$WORK/home/data" XDG_CONFIG_HOME="$WORK/home/co
   PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PATH=/usr/bin:/bin \
   "$PY" -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import server, window_win, faster_whisper, piper, kokoro_onnx, sounddevice
 print("bundled python", sys.version.split()[0], "imports server, window_win and the speech libraries")' "$RES/app"
+HOME="$WORK/home" XDG_DATA_HOME="$WORK/home/data" XDG_CONFIG_HOME="$WORK/home/config" XDG_CACHE_HOME="$WORK/home/cache" \
+  PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PATH=/usr/bin:/bin \
+  "$PY" -I packaging/macos/qtcheck.py "$RES/app"
 codesign --verify --deep --strict "$APPB"                       # still sealed after running it
 echo "Void $VER: $APPB ($(du -sh "$APPB" | cut -f1)), $OUT/Void.dmg ($(du -sh "$OUT/Void.dmg" | cut -f1))"
