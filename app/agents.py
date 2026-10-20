@@ -80,6 +80,7 @@ class Stream:
         self.turn = []             # the current turn's events, held until we know whose turn it is
         self.streamed = False      # this turn's text came as deltas (so the whole message isn't sent again)
         self.inited = False        # the process said hello (system/init) at least once
+        self.in_turn = False       # a turn is under way: from its system/init to its result
 
     # ---- subagents
     def running(self):
@@ -106,6 +107,7 @@ class Stream:
         self.awaiting.clear()
         self.turn = []
         self.ask_open = False
+        self.in_turn = False
         return out
 
     def stop_all(self):
@@ -163,12 +165,14 @@ class Stream:
                     self._main(out, {"t": "toolres", "id": tid, "text": tool_output(b.get("content")),
                                      "is_error": bool(b.get("is_error"))})
         elif ty == "result":
+            self.in_turn = False
             self._result(o, out)
         return out
 
     def _system(self, o, st, out):
         if st == "init":
             self.inited = True
+            self.in_turn = True
             self.streamed = False
             if o.get("session_id"):
                 out.append(("session", o["session_id"]))
@@ -402,7 +406,7 @@ class Brain:
 
     def stop(self, wait=3.0):
         """The Stop button: stop his answer and every subagent. Interrupt first (the chat stays warm); if he doesn't
-        stop within `wait` seconds, the whole process group goes."""
+        stop within `wait` seconds, the whole process group goes. No turn under way: your message just ends, he stays."""
         with self.lock:
             if not self.alive():
                 return False
@@ -411,6 +415,12 @@ class Brain:
             a = self.cur
             self._write({"type": "control_request", "request_id": f"i{time.time_ns()}", "request": {"subtype": "interrupt"}})
             gen = self.gen
+            if not self.stream.in_turn:            # (an interrupt then brings no result: nothing to wait for)
+                if a is not None:
+                    self.cur, self.stream.ask_open = None, False
+                    a.q.put({"t": "stopped"})
+                    a.q.put(("end", "done"))
+                return True
 
         def fallback():
             time.sleep(wait)

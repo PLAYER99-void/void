@@ -493,6 +493,19 @@ class LongLived(unittest.TestCase):
         self.assertTrue(wait_for(lambda: h.procs[0] in h.killed))   # (killed on its own thread, after "stopped")
         self.assertEqual(h.bus("sub_end")[0]["status"], "stopped")
 
+    def test_stop_with_no_turn_under_way_ends_the_message_and_keeps_the_process(self):
+        h = Harness(lambda p, o: None)                         # (no system/init: he never started on it)
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=h.ask()))
+        th.start()
+        self.assertTrue(wait_for(lambda: h.procs and h.procs[0].users()))
+        h.brain.stop(wait=0.1)
+        th.join(3)
+        self.assertEqual(res["r"], ("done", [{"t": "stopped"}]))
+        time.sleep(0.3)
+        self.assertEqual(h.killed, [])
+        self.assertTrue(h.brain.alive())
+
     def test_shutdown_stops_everything(self):
         h = Harness(lambda p, o: (answer(p, o), o.get("type") == "user" and p.emit(started("t1", "r1"))))
         h.ask()
