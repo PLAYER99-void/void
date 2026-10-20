@@ -2455,7 +2455,7 @@ def run_claude(prompt, emit, partial):
 
 
 def stop_proc():
-    """Stop: his answer and every subagent."""
+    """Stop: his answer (long-lived: his background helpers keep running; one-shot: the process goes, and they with it)."""
     APPROVALS.cancel_all()
     BRAIN.stop()
     p = ST.proc

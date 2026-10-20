@@ -528,6 +528,30 @@ class LongLived(unittest.TestCase):
         self.assertTrue(wait_for(lambda: h.procs[0] in h.killed))   # (killed on its own thread, after "stopped")
         self.assertEqual(h.bus("sub_end")[0]["status"], "stopped")
 
+    def test_stop_ends_his_answer_and_spares_background_helpers(self):
+        def cli(p, o):                                     # (2.1.304: an interrupt spares them only if Void said so)
+            r = o.get("request") or {}
+            if o.get("type") == "user":
+                p.emit(init(), started("t1", "r1"), delta("hmm"))
+            elif r.get("subtype") == "interrupt":
+                if {"subtype": "initialize", "perTaskStopAffordance": True} not in p.controls():
+                    p.emit(notified("t1", "stopped"))
+                p.emit({"type": "result", "subtype": "error_during_execution", "is_error": True})
+        h = Harness(cli)
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=h.ask()))
+        th.start()
+        self.assertTrue(wait_for(lambda: h.brain.running()))
+        h.brain.stop(wait=0.2)
+        th.join(3)
+        self.assertEqual(res["r"][1][-1], {"t": "stopped"})
+        time.sleep(0.3)
+        self.assertEqual(h.killed, [])
+        self.assertEqual([t["id"] for t in h.brain.running()], ["t1"])
+        h.procs[0].emit(notified("t1"), init(), delta("Found it."), result("Found it.", run="r1"))
+        self.assertTrue(wait_for(lambda: h.bus("followup")))   # (and what it finds is still said)
+        self.assertEqual(h.bus("followup")[0]["text"], "Found it.")
+
     def test_stop_with_no_turn_under_way_ends_the_message_and_keeps_the_process(self):
         h = Harness(lambda p, o: None)                         # (no system/init: he never started on it)
         res = {}

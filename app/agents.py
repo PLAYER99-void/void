@@ -113,7 +113,7 @@ class Stream:
         return out
 
     def stop_all(self):
-        """Void stops everything (the Stop button): whatever they report back isn't said."""
+        """Void stops every subagent itself: whatever they report back isn't said."""
         self.void_stopped |= {t["run"] for t in self.tasks.values() if t.get("run")}
         self.void_stopped |= set(self.awaiting)
 
@@ -410,13 +410,13 @@ class Brain:
             emit(**item)
 
     def stop(self, wait=3.0):
-        """The Stop button: stop his answer and every subagent. Interrupt first (the chat stays warm); if he doesn't
-        stop within `wait` seconds, the whole process group goes. No turn under way: your message just ends, he stays."""
+        """Stop (clicking his face, Esc, /stop): stop his answer; his background helpers keep running and still report
+        back. Interrupt first (the chat stays warm); if he doesn't stop within `wait` seconds, the whole process group
+        goes. No turn under way: your message just ends, he stays."""
         with self.lock:
             if not self.alive():
                 return False
             self.stopping = True
-            self.stream.stop_all()
             a = self.cur
             self._write({"type": "control_request", "request_id": f"i{time.time_ns()}", "request": {"subtype": "interrupt"}})
             gen = self.gen
@@ -492,6 +492,10 @@ class Brain:
         t_err = threading.Thread(target=lambda: err.extend(p.stderr), daemon=True)
         t_err.start()
         threading.Thread(target=self._read, args=(p, gen, t_err), daemon=True).start()
+        # an interrupt then stops his answer, not his background helpers too (2.1.304 spares them only if told; older
+        # ones ignore it)
+        self._write({"type": "control_request", "request_id": f"c{time.time_ns()}",
+                     "request": {"subtype": "initialize", "perTaskStopAffordance": True}})
 
     def _write(self, obj):
         p = self.proc
