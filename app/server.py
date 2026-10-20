@@ -1517,11 +1517,15 @@ def doctor():
 
 
 # ---------------------------------------------------------------- text to speech
-def piper_bin():
+def piper_cmd():
+    """The command that runs piper: Void's own interpreter with `-m piper` (a console script's shebang breaks once the
+    environment moves), else a piper on disk. → argv list, or None."""
+    import importlib.util
+    if importlib.util.find_spec("piper") is not None:
+        return [sys.executable, "-m", "piper"]
     local = Path(sys.executable).parent / ("piper.exe" if WIN else "piper")
-    if local.exists():
-        return str(local)
-    return shutil.which("piper") or shutil.which("piper-tts")
+    found = str(local) if local.exists() else (shutil.which("piper") or shutil.which("piper-tts"))
+    return [found] if found else None
 
 
 def piper_voice():
@@ -1539,7 +1543,7 @@ def tts_engine():
         return None
     if mode in ("auto", "kokoro") and kokoro_ready():
         return "kokoro"
-    if mode in ("auto", "piper") and piper_bin() and piper_voice():
+    if mode in ("auto", "piper") and piper_cmd() and piper_voice():
         return "piper"
     if mode in ("auto", "espeak") and shutil.which("espeak-ng"):
         return "espeak"
@@ -1687,7 +1691,7 @@ _piper_speed_flag = None
 
 def piper_run(model, text, out, length_scale):
     global _piper_speed_flag
-    base = [piper_bin(), "-m", model, "-f", out]
+    base = [*piper_cmd(), "-m", model, "-f", out]
     flags = [_piper_speed_flag] if _piper_speed_flag else ["--length-scale", "--length_scale"]
     if abs(length_scale - 1) > 0.01:
         for f in flags:
@@ -2162,7 +2166,7 @@ def synth(text: str):
         kp = float(vp.get("kpitch", 1.0))
         return kokoro_synth(text, CFG.get("kokoro_voice") or vp["kokoro"], 1.0 / kp), kp
     if eng == "kokoro":                                       # (the robot preset is espeak on purpose)
-        eng = "piper" if piper_bin() and piper_voice() else "espeak"
+        eng = "piper" if piper_cmd() and piper_voice() else "espeak"
     text = langmark.unmark(text)                              # piper and espeak just say the words
     pitch = float(vp.get("pitch", 1.0))
     fd, out = tempfile.mkstemp(suffix=".wav")
@@ -2218,7 +2222,7 @@ def claude_bin():
     if found:
         return found
     for c in (Path.home() / ".local/bin/claude", Path.home() / ".local/bin/claude.exe", Path.home() / ".claude/local/claude",
-              Path("/usr/bin/claude"), Path("/usr/local/bin/claude")):
+              Path("/usr/bin/claude"), Path("/usr/local/bin/claude"), Path("/opt/homebrew/bin/claude")):
         if c.exists():
             return str(c)
     return None
@@ -2347,6 +2351,24 @@ def build_cmd(binary, partial, live=False):
     return c
 
 
+def askpass_path(bin_dir=None):
+    """sudo runs SUDO_ASKPASS directly, so askpass.py's `python3` shebang would pick the system interpreter. Point it at
+    a tiny launcher that runs the script on Void's own interpreter instead."""
+    d = Path(bin_dir) if bin_dir else DATA_DIR / "bin"
+    launcher = d / "askpass"
+    body = "#!/bin/sh\nexec '%s' '%s' \"$@\"\n" % (sys.executable.replace("'", "'\\''"), str(APP_DIR / "askpass.py").replace("'", "'\\''"))
+    try:
+        if not launcher.exists() or launcher.read_text() != body:
+            d.mkdir(parents=True, exist_ok=True)
+            tmp = launcher.with_suffix(".tmp")
+            tmp.write_text(body)
+            tmp.chmod(0o700)
+            tmp.replace(launcher)
+        return str(launcher)
+    except OSError:
+        return str(APP_DIR / "askpass.py")
+
+
 def claude_env():
     env = dict(os.environ)
     env["PATH"] = str(Path.home() / ".local" / "bin") + os.pathsep + env.get("PATH", "")
@@ -2355,7 +2377,7 @@ def claude_env():
         env.pop("LC_ALL", None)
         env.pop("LC_CTYPE", None)
     if CFG.get("root_mode") and not WIN:
-        env["SUDO_ASKPASS"] = str(APP_DIR / "askpass.py")
+        env["SUDO_ASKPASS"] = askpass_path()
     env["VOID_PORT"], env["VOID_TOKEN"] = str(CFG["port"]), TOOL_TOKEN   # (the limited one: every command Claude runs sees it)
     return env
 
