@@ -1493,8 +1493,12 @@ function orbDraw(m,ts,dt,p,rm,goo){
     if(gp) Object.assign(gp,{x,y,a,d,sx,sy:1-.5*(sx-1)}); }
   k*=1+z/m.R*.18+.15*Math.exp(-(ts-m.tickAt)/180);
   const sg=m.sv>0?miniSplitGeo(m,ts,rm,goo):null, ext=sg?Math.max(S,sg.d+sg.r):S;   // (split: as wide as the pair)
-  const back=z<0, clear=Math.hypot(x,y)>76+ext*k+2;   // (switch layer only off his silhouette: the soft floor pulls the
-  if(back!==m.back&&clear){ (back?ML.back:ML.front).appendChild(m.el); m.back=back; }   //  ring's low crossing over him)
+  // it goes behind him or in front where its ring crosses (z = 0): off his silhouette if it is there, else where it
+  // overlaps him least, as soon as it stops moving away from his centre. (Waiting till it was off him failed for a ring
+  // barely wider than him, like the first one's, whose low crossing the soft floor pulls over him: it was hardly ever
+  // off him, so it made its whole pass behind him in front of him.)
+  const dc=Math.hypot(x,y), back=z<0, clear=dc>76+ext*k+2, least=m.pdc!=null&&dc<=m.pdc; m.pdc=dc;
+  if(back!==m.back&&(clear||least)){ (back?ML.back:ML.front).appendChild(m.el); m.back=back; }
   const deg=(a*180/Math.PI).toFixed(1), st=sx===1?'':` rotate(${deg}) scale(${sx.toFixed(3)},${(1-.5*(sx-1)).toFixed(3)}) rotate(${-deg})`;
   m.el.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})${st} scale(${k.toFixed(3)})`);
   m.el.setAttribute('opacity',clamp(op,0,1).toFixed(3));
