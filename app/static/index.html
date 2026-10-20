@@ -1280,7 +1280,7 @@ requestAnimationFrame(frame);
 const MINIS=new Map(), MINI_R=15, BEAD_R=6.5;
 const RM=window.matchMedia?matchMedia('(prefers-reduced-motion: reduce)'):{matches:false};
 const ML={goo:document.getElementById('miniGoo'),back:document.getElementById('miniBack'),front:document.getElementById('miniFront'),sh:document.getElementById('miniSh'),
-  bgoo:document.getElementById('beadGoo'),bface:document.getElementById('beadFace')};
+  bgoo:document.getElementById('beadGoo'),bface:document.getElementById('beadFace'),defs:document.querySelector('#guy defs'),bodyTr:''};
 let miniCore=null, beadLip=null;
 const miniHash=s=>{ let h=2166136261; for(const c of String(s)) h=Math.imul(h^c.charCodeAt(0),16777619); return (h>>>0)/4294967296; };
 // a free slot → its own ring: radii never repeat (slot·11 mod 30 walks every value), tilt and speed differ too; it buds
@@ -1368,7 +1368,7 @@ function miniMerge(m,ts){ const rm=RM.matches;
   if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
 function miniGone(m){
   if(m.goo) m.goo.forEach(c=>c.remove());
-  m.el.remove(); m.sh.remove(); m.sh2.remove(); m.bd.remove(); m.bd2.remove(); m.be.remove(); if(m.bbg) m.bbg.remove(); MINIS.delete(m.id); miniTip(m,null);
+  m.el.remove(); if(m.mk) m.mk.remove(); m.sh.remove(); m.sh2.remove(); m.bd.remove(); m.bd2.remove(); m.be.remove(); if(m.bbg) m.bbg.remove(); MINIS.delete(m.id); miniTip(m,null);
   if(m.status==='done'&&!RM.matches&&!document.body.classList.contains('bar')) G.jelly.kick(.35);   // gulp
   if(!MINIS.size){ gooSet(false); beadGooSet(false,null); sendRegion(true); }
 }
@@ -1463,6 +1463,21 @@ function miniPairGoo(m,sg,ox,oy,ax,sy){
 function miniShade(el,x,y,r,o){ const fl=clamp((MINI_FLOOR-y)/240,0,1), sr=r*(1.1-.55*fl);
   el.setAttribute('cx',x.toFixed(1)); el.setAttribute('rx',sr.toFixed(2)); el.setAttribute('ry',(sr*.16).toFixed(2));
   el.setAttribute('opacity',clamp(o*(1-.75*fl),0,1).toFixed(3)); }
+// a little Void just in front of him (0 ≤ z < 4 + MINI_LENS) is hidden where he is nearer you than it is, as if he were a
+// lens that thick: inside his rim till z = 4 (as behind him: a frame's step past z = 0 can't pop), inside a circle that shrinks to nothing as z grows. Past
+// that it's all in front of him, as it always was. A mask of its own, cut by his own disc (his squish and sway
+// included), on only while it reaches inside that circle.
+const MINI_LENS=18; let miniMaskN=0;
+function miniOcclude(m,on,x,y,z,k,ext){
+  const rb=on?76*(1-smooth((z-4)/MINI_LENS)):0, hit=on&&rb>0&&Math.hypot(x,y)-(ext+4)*k<rb*1.06+2;   // (+4: its glow)
+  if(!hit){ if(m.mkOn){ m.el.removeAttribute('mask'); m.mkOn=false; } return; }
+  if(!m.mk){ m.mk=sv('mask',{id:'mnMask'+(++miniMaskN),maskUnits:'userSpaceOnUse',x:-400,y:-400,width:800,height:800},ML.defs);
+    sv('rect',{x:-400,y:-400,width:800,height:800,fill:'#fff'},m.mk); m.mcut=sv('circle',{r:0,fill:'#000'},m.mk); }
+  // (its own frame: back out of its place and size into his layer, then his body's own transform)
+  m.mcut.setAttribute('transform',`scale(${(1/k).toFixed(4)}) translate(${(-x).toFixed(1)},${(-y).toFixed(1)}) ${ML.bodyTr}`);
+  m.mcut.setAttribute('r',rb.toFixed(1));
+  if(!m.mkOn){ m.el.setAttribute('mask',`url(#${m.mk.id})`); m.mkOn=true; }
+}
 function orbDraw(m,ts,dt,p,rm,goo){
   const S=MINI_R;
   let x,y,z=0,op=1,k=1,gp=null,a=0,d=0,sx=1,sk=1,open=1;
@@ -1493,12 +1508,15 @@ function orbDraw(m,ts,dt,p,rm,goo){
     if(gp) Object.assign(gp,{x,y,a,d,sx,sy:1-.5*(sx-1)}); }
   k*=1+z/m.R*.18+.15*Math.exp(-(ts-m.tickAt)/180);
   const sg=m.sv>0?miniSplitGeo(m,ts,rm,goo):null, ext=sg?Math.max(S,sg.d+sg.r):S;   // (split: as wide as the pair)
-  // it goes behind him or in front where its ring crosses (z = 0): off his silhouette if it is there, else where it
-  // overlaps him least, as soon as it stops moving away from his centre. (Waiting till it was off him failed for a ring
-  // barely wider than him, like the first one's, whose low crossing the soft floor pulls over him: it was hardly ever
-  // off him, so it made its whole pass behind him in front of him.)
-  const dc=Math.hypot(x,y), back=z<0, clear=dc>76+ext*k+2, least=m.pdc!=null&&dc<=m.pdc; m.pdc=dc;
-  if(back!==m.back&&(clear||least)){ (back?ML.back:ML.front).appendChild(m.el); m.back=back; }
+  // behind him while its ring is (z < 0), in front of him while it's in front, changing layer right where the ring
+  // crosses (z = 0). That crossing can be over him: the soft floor pulls the ring's low one inside his rim, and a split
+  // pair is wider than the gap between his rim and any ring. So just in front of him it's masked by him (miniOcclude):
+  // at z = 0 all of it inside his rim is hidden, just as behind him, and less of it as it comes toward you. It comes
+  // out of him or sinks into him, and never pops through. (Not while it buds out of his skin or is drunk back in:
+  // that's on his skin, in front of him.)
+  const back=z<0;
+  if(back!==m.back){ (back?ML.back:ML.front).appendChild(m.el); m.back=back; }
+  miniOcclude(m,!rm&&!back&&(m.st==='orbit'||m.st==='fail'||m.st==='done'||(m.st==='merge'&&p<.32)),x,y,z,k,ext);
   const deg=(a*180/Math.PI).toFixed(1), st=sx===1?'':` rotate(${deg}) scale(${sx.toFixed(3)},${(1-.5*(sx-1)).toFixed(3)}) rotate(${-deg})`;
   m.el.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})${st} scale(${k.toFixed(3)})`);
   m.el.setAttribute('opacity',clamp(op,0,1).toFixed(3));
@@ -1566,6 +1584,7 @@ function beadDraw(m,ts,dt,p,geo,rm,goo){
 function miniFrame(ts,dt,dxp){
   const inBar=document.body.classList.contains('bar'), rm=RM.matches, goo=!lowFx&&!rm, edge=inBar?(barEdge()||'top'):null;
   const geo=inBar?beadGeo(edge):null, tr=`translate(${dxp.toFixed(2)},0)`;
+  ML.bodyTr=`translate(${(-dxp).toFixed(2)},0) ${E.body.getAttribute('transform')||''}`;   // (his disc, in their layers)
   if(!inBar){ ML.goo.setAttribute('transform',tr); ML.back.setAttribute('transform',tr); ML.front.setAttribute('transform',tr); ML.sh.setAttribute('transform',tr); }
   let slime=false, beadSlime=false;
   for(const m of [...MINIS.values()]){
