@@ -1,6 +1,7 @@
 """Tests for the notch on the page: docked, when it moves to hang at another depth (the menu bar slid down over a
 full-screen app, or went), the liquid starts and ends exactly where the real notch is, so nothing snaps when the real
-notch takes over again. The real page in Qt's web view, offscreen: no window on the desktop.
+notch takes over again. And a little Void split in two has no eyes until it's whole again. The real page in Qt's web
+view, offscreen: no window on the desktop.
 
     python3 -m unittest discover -s tests
 """
@@ -32,7 +33,8 @@ PILL = "JSON.stringify((r=>[r.top,r.bottom,r.left,r.right])($('#barPill').getBou
 
 
 @unittest.skipUnless(QWebEngineView and sys.platform == "darwin", "macOS with PySide6's web view only")
-class NotchShift(unittest.TestCase):
+class Page(unittest.TestCase):
+    """The page in a web view of its own, for each class of tests."""
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -84,6 +86,10 @@ class NotchShift(unittest.TestCase):
             time.sleep(0.02)
         raise AssertionError("the page never got there")
 
+
+
+@unittest.skipUnless(QWebEngineView and sys.platform == "darwin", "macOS with PySide6's web view only")
+class NotchShift(Page):
     def pill(self):
         return json.loads(self.js(PILL))
 
@@ -112,13 +118,61 @@ class NotchShift(unittest.TestCase):
             self.assertLessEqual(seen[-1][0], after[0] + 1)              # (and hangs from at least as high)
 
 
+# every frame of a little Void's life (its state, how far it's split, its eyes' opacity) while it buds, splits for a
+# helper of its own, comes back together and is drunk back in
+LIFE = """(()=>{ window.__life=[]; const id='t-split';
+  onEvent({t:'sub_start', id, type:'Explore', kids:1});
+  (function f(){ const m=MINIS.get(id); if(!m){ window.__life.push(null); return; }
+      window.__life.push([m.st, m.sv, +m.eyes.getAttribute('opacity')]);
+      if(m.st==='orbit'&&m.sv>=1&&m.kids) miniKids({id, n:0});                        // its helper's done
+      if(m.st==='orbit'&&!m.kids&&!m.sv&&!m.status) onEvent({t:'sub_end', id, status:'done'});
+      requestAnimationFrame(f); })();
+  return 1; })()"""
+# its eyes' opacity drawn at each split (sv) in each mode: rm reduced motion, goo the glow on
+SWEEP = """JSON.stringify((()=>{ const m=miniAdd({id:'t-sweep'}), out=[];
+  m.st='orbit'; m.kids=1;
+  for(const [rm,goo] of [[false,true],[false,false],[true,false]])
+    for(const sv of [0,.05,.1,.16,.3,.6,.76,.9,1]){
+      Object.assign(m,{sv, svDir:1, phi:0, pinchAt:0});
+      orbDraw(m,performance.now(),.016,1,rm,goo); out.push([rm,goo,sv,+m.eyes.getAttribute('opacity')]); }
+  miniGone(m); return out; })())"""
+
+
+@unittest.skipUnless(QWebEngineView and sys.platform == "darwin", "macOS with PySide6's web view only")
+class SplitEyes(Page):
+    """A little Void split in two has no eyes: shut, they'd be a sliver of eye-white over both halves."""
+
+    def test_no_eyes_while_split_and_back_after(self):
+        for rm, goo, sv, op in json.loads(self.js(SWEEP)):
+            with self.subTest(rm=rm, goo=goo, sv=sv):
+                if sv == 0 or (not rm and sv <= .1):
+                    self.assertEqual(op, 1)                              # (whole, or only starting to shut its eyes)
+                elif not rm and sv >= .16 or sv == 1:
+                    self.assertEqual(op, 0)
+
+    def test_eyes_gone_through_a_real_split_and_back_at_merge(self):
+        self.js(LIFE)
+        self.wait_for(lambda: self.js("window.__life.at(-1)===null"), timeout=20)
+        life = json.loads(self.js("JSON.stringify(window.__life)"))[:-1]
+        self.js("window.__life=null")
+        split = [op for st, sv, op in life if sv >= .16]
+        self.assertTrue(split and life[0][0] == "bud" and any(sv == 1 for _, sv, _ in life))
+        self.assertEqual(max(split), 0)                                  # split: no eyes at all
+        bud = [i for i, (st, _, _) in enumerate(life) if st == "bud"]
+        self.assertEqual(life[bud[-1]][2], 1)                            # budded out: eyes on
+        whole = [op for st, sv, op in life[bud[-1] + 1:] if st in ("orbit", "done") and sv == 0]
+        self.assertTrue(whole)
+        self.assertEqual(min(whole), 1)                                  # together again, before it's drunk in
+        self.assertEqual(next(op for st, _, op in life if st == "merge"), 1)
+
+
 @unittest.skipUnless(QWebEngineView and sys.platform == "darwin", "macOS with PySide6's web view only")
 class CleanExit(unittest.TestCase):
     def test_passes_and_then_exits_cleanly(self):
-        """The web view's test on its own, in a fresh Python: it passes and then exits without crashing (a crash on the
-        way out leaves a report and puts 'Python quit unexpectedly' on screen, after the test said OK)."""
-        r = subprocess.run([sys.executable, "-m", "unittest", "test_page_notch.NotchShift"], cwd=Path(__file__).parent,
-                           capture_output=True, text=True, timeout=60)
+        """The web view's tests on their own, in a fresh Python: they pass and then it exits without crashing (a crash on
+        the way out leaves a report and puts 'Python quit unexpectedly' on screen, after the tests said OK)."""
+        r = subprocess.run([sys.executable, "-m", "unittest", "test_page_notch.NotchShift", "test_page_notch.SplitEyes"],
+                           cwd=Path(__file__).parent, capture_output=True, text=True, timeout=60)
         self.assertIn("OK", r.stderr)
         self.assertEqual(r.returncode, 0, r.stderr[-500:])               # (a crash: -11, SIGSEGV)
 

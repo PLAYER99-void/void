@@ -1419,15 +1419,16 @@ function miniSplitStep(m,ts,dt,rm){
     m.sv=Math.max(0,m.sv-dt/(rm?.32:.75));
   }
 }
-// the split at m.sv, the same liquid as budding off him: eyes shut, its skin gives way to the goo, which swells long
-// round a fat waist; the waist sinks and the two ends pinch apart (too fat to draw a thread), wobble, and put their own
-// skins on. d: each half's distance from its centre, r: a half's radius, w: the waist, sk1/sk2: the one skin / the
-// halves' skins, gp: the goo's on. Back together it runs in reverse. Reduced motion: a cross-fade, side by side.
+// the split at m.sv, the same liquid as budding off him: eyes shut and gone (no shut sliver left over the halves), its
+// skin gives way to the goo, which swells long round a fat waist; the waist sinks and the two ends pinch apart (too fat
+// to draw a thread), wobble, and put their own skins on. d: each half's distance from its centre, r: a half's radius,
+// w: the waist, sk1/sk2: the one skin / the halves' skins, eo: the eyes', gp: the goo's on. Back together it runs in
+// reverse. Reduced motion: a cross-fade, side by side.
 function miniSplitGeo(m,ts,rm,goo){
   const p=m.sv, S=MINI_R;
   if(rm) return {d:SPLIT_D, r:SPLIT_R, w:0, sk1:1-p, sk2:p, open:1, eo:1-p, gp:false, sx:1};
   const g={d:p<.22?0:p<.7?14*easeIO((p-.22)/.48):lerp(14,SPLIT_D,easeOutC((p-.7)/.2)), r:lerp(S*.86,SPLIT_R,smooth((p-.2)/.4)),
-           w:S*(1-smooth((p-.3)/.28)), sk1:1-smooth((p-.1)/.14), sk2:smooth((p-.74)/.12), open:1-smooth(p/.14), eo:1,
+           w:S*(1-smooth((p-.3)/.28)), sk1:1-smooth((p-.1)/.14), sk2:smooth((p-.74)/.12), open:1-smooth(p/.14), eo:1-smooth((p-.1)/.06),
            gp:goo&&p>.06&&p<.9, sx:1};
   if(!goo){ g.sk1=1-smooth((p-.1)/.3); g.sk2=smooth((p-.15)/.3); return g; }           // (glow off: no goo)
   if(m.svDir>0) g.sx=m.pinchAt?1+miniWob((ts-m.pinchAt)/1000):p<.76?1+.2*smooth((p-.25)/.51):1;   // pulled long, let go
