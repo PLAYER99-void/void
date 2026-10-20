@@ -1,0 +1,25 @@
+#!/bin/sh
+# Void.app/Contents/MacOS/Void: the macOS branch of bin/void, run with the Python inside the bundle.
+# Starts the server in the background if it isn't up, then becomes his Qt window (or hands the command to it).
+#   open Void.app            show / hide him
+#   open Void.app --args listen
+set -eu
+CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
+PY="$CONTENTS/Resources/python/bin/python3"; APP="$CONTENTS/Resources/app"
+ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/void"; LOG="$ROOT/server.log"
+export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1    # nothing from ~/.local, nothing written into the signed bundle
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"   # Finder gives a bare PATH
+mkdir -p "$ROOT"
+PORT="$("$PY" "$APP/server.py" --print-port)"
+URL="http://127.0.0.1:$PORT/"
+up(){ curl -fs -o /dev/null "${URL}api/state"; }
+if ! up; then
+  nohup "$PY" "$APP/server.py" >>"$LOG" 2>&1 </dev/null &
+  for _ in $(seq 60); do up && break; sleep 0.1; done
+  up || { echo "server didn't start — see $LOG" >&2; exit 1; }
+fi
+CMD="${1:-toggle}"
+if pgrep -f "$APP/window_win.py" >/dev/null 2>&1; then exec "$PY" "$APP/window_win.py" "${URL}?native=1" "$CMD"; fi
+[ "$CMD" = hide ] || [ "$CMD" = quit ] && exit 0
+[ "$CMD" = toggle ] && CMD=show
+exec "$PY" "$APP/window_win.py" "${URL}?native=1" "$CMD" >>"$LOG" 2>&1 </dev/null
