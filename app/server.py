@@ -2327,7 +2327,8 @@ def pick_model():
 
 def build_cmd(binary, partial, live=False):
     """live: the long-lived process (messages come in on stdin as stream-json; see agents.Brain)."""
-    c = [binary, "-p"] + (["--input-format", "stream-json"] if live else []) + ["--output-format", "stream-json", "--verbose"]
+    c = [binary, "-p"] + (["--input-format", "stream-json", "--replay-user-messages"] if live else [])   # (the echo: agents.Stream)
+    c += ["--output-format", "stream-json", "--verbose"]
     if partial:
         c.append("--include-partial-messages")
     c += perm_args()

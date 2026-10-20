@@ -7,7 +7,8 @@ short follow-up. Two parts:
   * Stream – turns the raw stream-json events into Void's events (pure: no threads, no processes; see the tests).
     It knows which subagents are running (and how many helpers of their own each one has), and which turn a reply belongs to — yours, or a follow-up — before any of
     it is spoken (a turn's origin is only written on its result, so while a follow-up could be in flight, its text
-    is held until then).
+    is held until then). A message of yours that Claude Code takes into a turn of its own (--replay-user-messages
+    echoes it back when it does) is answered by that turn's result, whoever started the turn.
   * Brain – owns the process: starts it (in its own process group), feeds it your messages, restarts it when real
     settings change, picks it up again with --resume after a crash, and stops it and everything it started.
 
@@ -77,6 +78,7 @@ class Stream:
         self.void_stopped = set()  # run ids Void stopped itself: their follow-ups aren't said
         self.awaiting = {}         # run ids whose follow-up turn could still come → results seen since
         self.ask_open = False      # a message of yours is waiting for its result
+        self.taken = False         # …and the turn now running took it in (its echo came back)
         self.turn = []             # the current turn's events, held until we know whose turn it is
         self.streamed = False      # this turn's text came as deltas (so the whole message isn't sent again)
         self.inited = False        # the process said hello (system/init) at least once
@@ -106,7 +108,7 @@ class Stream:
         self.launches.clear()
         self.awaiting.clear()
         self.turn = []
-        self.ask_open = False
+        self.ask_open = self.taken = False
         self.in_turn = False
         return out
 
@@ -151,6 +153,8 @@ class Stream:
                                                           "desc": str(inp.get("description") or "")}
                     detail, panel = self.describe(name, inp)
                     self._main(out, {"t": "tool", "name": name, "detail": detail, "id": b.get("id", ""), "input": panel})
+        elif ty == "user" and o.get("isReplay"):
+            self.taken = self.taken or self.ask_open      # your message, echoed as Claude Code picks it up
         elif ty == "user":
             content = (o.get("message") or {}).get("content")
             for b in content if isinstance(content, list) else []:
@@ -233,6 +237,7 @@ class Stream:
         if o.get("session_id"):
             out.append(("session", o["session_id"]))
         held, self.turn, self.streamed = self.turn, [], False
+        taken, self.taken = self.taken, False
         origin = o.get("origin") or {}
         run = origin.get("runId") if origin.get("kind") == "task-notification" else None
         if run is not None:
@@ -246,7 +251,7 @@ class Stream:
             if not origin:
                 self._answer(o, ok, held, out)
             return
-        if origin:                                 # Claude Code's own turn (a subagent reported back): a follow-up
+        if origin and not (taken and self.ask_open):   # Claude Code's own turn (a subagent or a peer): a follow-up
             if run in self.void_stopped:
                 return
             text = o.get("result") or "".join(e.get("text", "") for e in held if e.get("t") == "delta")

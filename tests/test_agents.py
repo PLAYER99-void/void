@@ -134,11 +134,21 @@ def delta(text):
             "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}}}
 
 
-def result(text, run=None):
+PEER = {"kind": "peer"}
+
+
+def result(text, run=None, origin=None):
     o = {"type": "result", "subtype": "success", "is_error": False, "result": text}
     if run:
         o["origin"] = {"kind": "task-notification", "producer": "session-task", "runId": run}
+    if origin:
+        o["origin"] = origin
     return o
+
+
+def echo(text):
+    """Your message, as --replay-user-messages sends it back once Claude Code takes it in (2.1.304)."""
+    return {"type": "user", "message": {"role": "user", "content": text}, "parent_tool_use_id": None, "isReplay": True}
 
 
 def started(tid, run, bg=True, **kw):
@@ -190,6 +200,31 @@ class Routing(unittest.TestCase):
         out = feed(s, init(), delta("Sure, "))
         self.assertIn(("ask", {"t": "delta", "text": "Sure, "}), out)          # which streams live again
         self.assertEqual(s.feed(result("Sure, done."))[-1][0], "end")
+
+    def test_your_message_taken_into_a_peers_turn_is_answered_by_it(self):
+        s = agents.Stream()
+        feed(s, init(), delta("Got your note. "))             # another session's message started this turn
+        s.ask_open = True
+        out = feed(s, echo("And the tests?"), delta("They pass."), result("They pass.", origin=PEER))
+        self.assertEqual(bus(out, "followup"), [])
+        self.assertIn("They pass.", said(out))
+        self.assertEqual(out[-1], ("end", {"t": "result", "text": "They pass.", "is_error": False, "cost": None,
+                                           "turns": None}))
+        self.assertFalse(s.ask_open)
+
+    def test_your_message_taken_into_a_follow_up_turn_is_answered_by_it(self):
+        s = agents.Stream()
+        feed(s, init(), started("t1", "r1"), result("Started it."), notified("t1"), init())
+        s.ask_open = True
+        out = feed(s, echo("Is it done?"), delta("Yes."), result("Yes.", run="r1"))
+        self.assertEqual(bus(out, "followup"), [])
+        self.assertEqual([e["text"] for d, e in out if d == "end"], ["Yes."])
+
+    def test_a_peers_turn_is_a_follow_up(self):
+        s = agents.Stream()
+        out = feed(s, init(), delta("Your build finished."), result("Your build finished.", origin=PEER))
+        self.assertEqual(bus(out, "followup"), [{"t": "followup", "text": "Your build finished.", "ok": True}])
+        self.assertEqual(to_ask(out), [])
 
     def test_follow_up_while_idle(self):
         s = agents.Stream()
