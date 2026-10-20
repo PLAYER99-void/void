@@ -32,7 +32,7 @@ for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF
         _s.reconfigure(encoding="utf-8", errors="replace")
 
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--autoplay-policy=no-user-gesture-required")
-from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, Qt, QTimer, QUrl, Signal, Slot  # noqa: E402
+from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, Qt, QTimer, QUrl, Signal, Slot  # noqa: E402
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QIcon, QPainter  # noqa: E402
 from PySide6.QtWebChannel import QWebChannel  # noqa: E402
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings  # noqa: E402
@@ -43,6 +43,7 @@ W, H = 340, 460
 WIDE = 470                   # while settings / history / memory are open the window widens to this
 CODE_SIDE = 100              # room either side for his terminal
 BAR_SIDE = 70                # docked at the top / bottom: room either side of the notch, so his glow fades out in it
+ROOM = max(WIDE - W, CODE_SIDE, BAR_SIDE)   # always kept on his left, so he never moves in the window (see set_wide)
 GLIDE = 0.26                 # seconds the window takes to glide into the notch and back (quick: it should feel snappy)
 MENU_LOOK = 150              # ms between looks for a full-screen app's menu bar sliding down over the notch (macOS)
 MENU_STEADY = 3              # looks in a row that must agree before he moves (a flick past the edge mustn't bob him)
@@ -171,9 +172,10 @@ class VoidWindow(QWidget):
         self.setWindowIcon(QIcon(str(APP / "static" / "icon.png")))
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.cur_w, self.wide_shift, self.want_panel, self.want_code = W, 0, False, False
+        self.cur_w, self.wide_shift, self.want_panel, self.want_code = W + ROOM, ROOM, False, False
+        self.box_l = 0                                                   # px of the room on his left in use (set_wide)
         self.own_pos, self.unresize_due = None, False                    # his last spot at his own size (see resizeEvent)
-        self.resize(W, H)
+        self.resize(self.cur_w, H)
         self.hover, self.hpos, self.home, self.rects, self.through = False, None, None, None, None
         self.bar, self.bar_home = False, None                                # top bar: his eyes in a notch up top
         self.want_bar, self.glide_n = False, 0                               # (room for the notch's glow; current glide)
@@ -200,7 +202,7 @@ class VoidWindow(QWidget):
         f = QFile(":/qtwebchannel/qwebchannel.js")
         f.open(QIODevice.ReadOnly)
         sc = QWebEngineScript()
-        sc.setSourceCode(bytes(f.readAll()).decode() + SHIM)
+        sc.setSourceCode(bytes(f.readAll()).decode() + SHIM + f"window.voidLayoutX={self.wide_shift};")   # (from frame 1)
         sc.setInjectionPoint(QWebEngineScript.DocumentCreation)
         sc.setWorldId(QWebEngineScript.MainWorld)
         page.scripts().insert(sc)
@@ -208,6 +210,7 @@ class VoidWindow(QWidget):
             lambda origin, feat: page.setFeaturePermission(origin, feat, QWebEnginePage.PermissionDeniedByUser))
         page.renderProcessTerminated.connect(lambda *a: (log("page renderer stopped — reloading"),
                                                          QTimer.singleShot(400, v.reload)))
+        page.loadFinished.connect(lambda ok: self._js(f"window.voidRoom&&voidRoom({self.box_l})"))   # (a reload too)
         self.url = url
         lay.activate()                     # (give the view its real size before the page first measures it: else it can
         v.load(QUrl(self._authed_url()))  #  read Qt's 100x30 placeholder, scale him to a speck and never hear otherwise)
@@ -231,9 +234,13 @@ class VoidWindow(QWidget):
         self.look_t = 0.0
 
     # ---- position (remembered across runs)
+    def _screen(self):
+        """The screen his own strip is on (the room on his left may hang over onto the next one)."""
+        c = QPoint(self.x() + self.wide_shift + W // 2, self.y() + H // 2)
+        return QGuiApplication.screenAt(c) or QGuiApplication.primaryScreen()
+
     def _screen_rect(self):
-        scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
-        return scr.availableGeometry()                                    # minus the taskbar
+        return self._screen().availableGeometry()                         # minus the taskbar
 
     def _load_pos(self):
         try:
@@ -244,7 +251,7 @@ class VoidWindow(QWidget):
         except Exception:  # noqa: BLE001
             g = QGuiApplication.primaryScreen().availableGeometry()
             x, y = g.right() - W - 10, g.bottom() - H - 10                # default: bottom-right corner
-        self.move(x, y)
+        self.move(x - self.wide_shift, y)
 
     def moveEvent(self, ev):
         if (self.width(), self.height()) == (self.cur_w, H):              # (not mid-way through someone else's resize)
@@ -387,7 +394,7 @@ class VoidWindow(QWidget):
         if self.bar != "top" or self.hover:
             self.menu_t.stop()
             return
-        scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
+        scr = self._screen()
         g, c, now = scr.geometry(), QCursor.pos(), time.monotonic()
         if g.left() <= c.x() <= g.right() and g.top() <= c.y() < g.top() + self.menu_room + 8:
             self.menu_near = now
@@ -403,7 +410,7 @@ class VoidWindow(QWidget):
     def _screens_changed(self):
         if not self.bar or self.hover:
             return
-        scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
+        scr = self._screen()
         g, ins = self._bar_area(scr)
         x, y = self._bar_xy(self.bar, g)
         if (x, y) != (self.x() + self.wide_shift, self.y()):            # (the screen itself changed)
@@ -425,7 +432,7 @@ class VoidWindow(QWidget):
             if not self.bar:
                 self.bar_home = (self.x() + self.wide_shift, self.y())
             self.bar = edge
-            scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
+            scr = self._screen()
             g, ins = self._bar_area(scr)                                 # (the bottom edge sits above the taskbar)
             x, y = self._bar_xy(edge, g)
             self._set_inset(ins[edge], glide=False)                      # (the page eases there as he docks)
@@ -455,37 +462,23 @@ class VoidWindow(QWidget):
         # (pulled out by the mouse: the page just pops him out — the notch's melt happens on the wall, in a Ghost)
         self._js("window.voidDock&&voidDock(%s,%s)" % (json.dumps(edge or ""), json.dumps("pull" if to and not edge else "")))
 
-    def _glide_to(self, bx, by, done=None, room=None):
+    def _glide_to(self, bx, by, done=None):
         """Glide his own 340px strip to (bx, by) over GLIDE seconds, easing out; a newer glide (or move) cancels this.
-        room: grow or shrink the window to this many px either side of the strip on the way, a little every frame —
-        in one jump the page lags a frame behind the window and he shows in the wrong place (a flicker)."""
+        (The window keeps its size: he never moves inside it, see set_wide.)"""
         self.glide_n += 1
         n, t0 = self.glide_n, time.monotonic()
         sbx, sby = self.x() + self.wide_shift, self.y()
-        manage = room is not None and not (self.want_panel or self.want_code)
-        L0 = self.wide_shift
-        L1 = room if manage else L0
 
         def step():
             if n != self.glide_n:
                 return
             k = min(1.0, (time.monotonic() - t0) / GLIDE)
             e = 1 - (1 - k) ** 3
-            x, y = int(round(sbx + (bx - sbx) * e)), int(round(sby + (by - sby) * e))
-            L = int(round(L0 + (L1 - L0) * e)) if manage else self.wide_shift
-            if L != self.wide_shift:
-                self.wide_shift, self.cur_w = L, W + 2 * L
-                self.setGeometry(x - L, y, self.cur_w, H)
-                self._js(f"window.voidLayout&&voidLayout({L})")
-            else:
-                self.move(x - L, y)
+            self.move(int(round(sbx + (bx - sbx) * e)) - self.wide_shift, int(round(sby + (by - sby) * e)))
             if k < 1:
                 QTimer.singleShot(8, step)
-            else:
-                if manage:
-                    self.want_bar = L1 > 0
-                if done:
-                    done()
+            elif done:
+                done()
         step()
 
     def _drag_done(self):
@@ -530,7 +523,7 @@ class VoidWindow(QWidget):
             c = QCursor.pos()                                            # under your mouse, still being dragged
             e = self.bar                                                 # the notch stays on the wall and melts away
             nx, ny, nw, nh = self._ghost_rect()
-            self.set_wide(False, "bar")                                  # (first: it changes wide_shift)
+            self.set_wide(False, "bar")                                  # (first: it may resize him)
             self.set_bar(None, to=(c.x() - BALL[0] - self.wide_shift, c.y() - BALL[1]))
             # (a moment later: a new window appearing right as the drag starts can upset the drag)
             QTimer.singleShot(30, lambda: setattr(self, "ghost", Ghost(nx, ny, nw, nh, e)))
@@ -571,10 +564,13 @@ class VoidWindow(QWidget):
         if self.hover:
             self._follow()
             return
-        if self.rects is None or not self.isVisible():
+        if not self.isVisible():
             self._set_through(False)
             return
         p = QCursor.pos() - self.pos()
+        if self.rects is None:                                           # all of him takes clicks, not the unused room
+            self._set_through(p.x() < self.wide_shift - self.box_l)
+            return
         solid = any(x <= p.x() < x + w and y <= p.y() < y + h for x, y, w, h in self.rects)
         self._set_through(not solid)
 
@@ -736,6 +732,9 @@ class VoidWindow(QWidget):
 
     # ---- widening for panels / his terminal
     def set_wide(self, on, kind="panel"):
+        """Make room: panels on his left, his terminal either side. The room on his left is always there and the page is
+        told how much of it to use (voidRoom): moving the window and him in it at once, the page a frame behind showed
+        him 100 px off for a frame. Only the right side grows and shrinks (the page is drawn from the left)."""
         if kind == "panel":
             self.want_panel = on
         elif kind == "bar":
@@ -749,11 +748,12 @@ class VoidWindow(QWidget):
         base = self.x() + self.wide_shift                                 # where his own 340px strip starts
         g = self._screen_rect()
         L, R = min(L, max(0, base - g.left())), min(R, max(0, g.right() - base - W))
-        if W + L + R == self.cur_w and L == self.wide_shift:
-            return
-        self.wide_shift, self.cur_w = L, W + L + R
-        self.setGeometry(base - L, self.y(), self.cur_w, H)
-        self._js(f"window.voidLayout&&voidLayout({L})")
+        if L != self.box_l:
+            self.box_l = L
+            self._js(f"window.voidRoom&&voidRoom({L})")
+        if self.wide_shift + W + R != self.cur_w:
+            self.cur_w = self.wide_shift + W + R
+            self.resize(self.cur_w, H)
 
     # ---- hover mode: he is the mouse pointer
     def set_hover(self, on):
@@ -761,7 +761,7 @@ class VoidWindow(QWidget):
             return
         if on and self.bar:                                              # out of the notch first (it mustn't fly around)
             self.set_bar(None, glide=False)                              # (at once: the cursor-following starts here)
-        if on and self.cur_w > W:
+        if on and (self.box_l or self.cur_w > self.wide_shift + W):
             self.want_code = False
             self.set_wide(False)
         self.hover = on
@@ -781,7 +781,7 @@ class VoidWindow(QWidget):
             self.vel = [self.vel[0] * 0.8 + (c.x() - self.last[0]) / dt * 0.2,
                         self.vel[1] * 0.8 + (c.y() - self.last[1]) / dt * 0.2]
         self.last = (c.x(), c.y(), now)
-        self.hpos = [c.x() - BALL[0], c.y() - BALL[1]]                   # right on the pointer: he *is* the cursor
+        self.hpos = [c.x() - BALL[0] - self.wide_shift, c.y() - BALL[1]]  # right on the pointer: he *is* the cursor
         if (self.x(), self.y()) != (self.hpos[0], self.hpos[1]):
             self.move(self.hpos[0], self.hpos[1])
         if now - self.look_t >= 0.033:                                    # his eyes only need ~30 updates a second
@@ -831,9 +831,9 @@ def main():
         edge, out = sys.argv[3], sys.argv[4]
 
         def report(cls):
-            g = (QGuiApplication.screenAt(win.frameGeometry().center()) or QGuiApplication.primaryScreen()).availableGeometry()
-            win.grab().save(out)
-            print(f"selftest-bar: {edge} x={win.x()} y={win.y()} w={win.width()} h={win.height()} "
+            g = win._screen_rect()
+            win.grab().save(out)                                         # (x, w: his own, not the room on his left)
+            print(f"selftest-bar: {edge} x={win.x() + win.wide_shift} y={win.y()} w={win.width() - win.wide_shift} h={win.height()} "
                   f"area={g.x()},{g.y()},{g.width()},{g.height()} page={cls}", flush=True)
             app.quit()
         QTimer.singleShot(10000, lambda: win.set_bar(edge))              # (slow test machines: let the page load)

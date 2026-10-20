@@ -202,7 +202,7 @@ body.gooing #menu:not(.on) .mb{transform:translate(0,0) scale(.1);transition:tra
 
 
 /* panels (settings, history, memory, actions) */
-.pn{position:fixed;left:12px;right:12px;top:34px;max-height:calc(100vh - 46px);display:flex;flex-direction:column;border-radius:18px;
+.pn{position:fixed;left:calc(12px + var(--bx,0px));right:12px;top:34px;max-height:calc(100vh - 46px);display:flex;flex-direction:column;border-radius:18px;
   background:var(--panel);border:1px solid var(--edge);box-shadow:0 0 9px var(--accA);   /* small: a big dark shadow got cut by the window edge and left dim pixels */font-size:12.5px;z-index:6;
   opacity:0;transform:translateY(-10px) scale(.96);pointer-events:none;transition:opacity .4s var(--ease),transform .6s var(--ease)}
 .pn.on{opacity:1;transform:none;pointer-events:auto}
@@ -302,7 +302,7 @@ select:focus,.pn input[type=text]:focus,.pn textarea:focus{border-color:var(--ed
 @keyframes pwShake{25%{transform:translateX(-6px)}50%{transform:translateX(6px)}75%{transform:translateX(-3px)}}
 body.pw #cap,body.pw #appr{opacity:0}
 
-#flash{position:fixed;inset:0;pointer-events:none;opacity:0;background:radial-gradient(45% 35% at 50% 36%,var(--flash,#ff2a2a) 0%,transparent 70%)}
+#flash{position:fixed;inset:0 0 0 var(--bx,0px);pointer-events:none;opacity:0;background:radial-gradient(45% 35% at 50% 36%,var(--flash,#ff2a2a) 0%,transparent 70%)}
 #flash.go{animation:flash .9s var(--ease)}
 #paint{position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:40}
 #menu{z-index:20} .pn{z-index:21} #appr{z-index:22} #ask{z-index:19} #atts{z-index:18} #cap{z-index:5} #chip{z-index:30}
@@ -2769,14 +2769,20 @@ window.voidCmd=async c=>{ hiddenNow=false;
 let lastRegion='';
 function calmCheck(){ document.body.classList.toggle('calm', setEl.classList.contains('on')||panelEl.classList.contains('on')||apEl.classList.contains('on')); }
 // the page is laid out for 340×460: if the window ends up a different size, scale/centre it instead of cutting things off
-let fitK=1, layoutX=0;
+// layoutX: where he starts in the window (Qt: its room on his left, from the first frame); roomL: how much of that room
+// the panels and the terminal may use (null: all of it); boxX: where that starts (the window's left edge, as they see it)
+let fitK=1, layoutX=window.voidLayoutX|0, roomL=null, boxX=0;
 function fit(){ const k=Math.min(1, innerWidth/340, innerHeight/460); fitK=k>0.995?1:k; const bs=document.body.style;
   bs.transformOrigin='0 0'; bs.margin='0'; bs.marginLeft=layoutX+'px';
   const [ix,iy]=barInXY();                        // (in the notch: in from the edge, past the menu bar or the Dock)
   bs.transform=((ix||iy?`translate(${ix}px,${iy}px)`:'')+(fitK===1?'':` scale(${fitK})`)).trim();
+  boxX=roomL==null?0:Math.max(0,layoutX-roomL);   // (body transformed: the panels are laid out in it, not the window)
+  document.documentElement.style.setProperty('--bx',(bs.transform?0:boxX)+'px');
   if(NATIVE&&fitK<1) console.log(`[void] window is ${innerWidth}x${innerHeight} (expected 340x460) — scaling the page to fit`); }
 // the window widened for a panel: it grew to the left by ox px, so shift the page back and he stays exactly where he was
 window.voidLayout=ox=>{ layoutX=ox|0; fit(); sendRegion(true); requestAnimationFrame(moveInd); };
+// …or (Qt) the room is always there and only this much of it is for the panels and the terminal: he never moves
+window.voidRoom=px=>{ roomL=px|0; fit(); sendRegion(true); requestAnimationFrame(moveInd); };
 addEventListener('resize',()=>{ fit(); sendRegion(true); moveInd(); }); fit();
 // (a resize event can come while the view is still at its startup placeholder size and none after: watch the page too)
 if(window.ResizeObserver) new ResizeObserver(()=>{ fit(); sendRegion(true); moveInd(); }).observe(document.documentElement);
@@ -2829,7 +2835,7 @@ addEventListener('mousemove',ev=>{ wake(); lastMouse=performance.now();
   if(dragged && downAt && mode.layer && !mode.cursor && (ev.buttons&1)) native(`dragby:${(ev.clientX-downAt[0]).toFixed(0)},${(ev.clientY-downAt[1]).toFixed(0)}`);
   if(!(ev.buttons&1)) downAt=null;
   if(document.body.classList.contains('hover')) return;
-  const r=$('#guy').getBoundingClientRect(); tx=clamp((ev.clientX-r.left-r.width/2)/innerWidth*16,-7,7); ty=clamp((ev.clientY-r.top-r.height/2)/innerHeight*12,-6,6); });
+  const r=$('#guy').getBoundingClientRect(); tx=clamp((ev.clientX-r.left-r.width/2)/(innerWidth-boxX)*16,-7,7); ty=clamp((ev.clientY-r.top-r.height/2)/innerHeight*12,-6,6); });
 // cut him off: stop Claude (if it's working) and stop talking. Click / Space then go straight to listening.
 async function interrupt(){ const was=busy; shush(); CP.hide(); sfx('pop'); poke('surprised',650); G.jelly.kick(.5);
   if(was){ post('/api/stop'); for(let i=0;i<80&&busy;i++) await sleep(50); } }
@@ -2897,7 +2903,7 @@ const CP=(()=>{
   const faceYou=()=>info.code_face==='you';
   function geo(){ const b=ball(); return {cx:b.left+b.width/2, cy:b.top+b.height/2, r:b.width/2}; }
   function roomFor(gx){ if(!gx) return true; const {cx}=geo(), x=cx+gx*15, half=W/2+14;     // would the paper fit there?
-    return x-half>=0 && x+half<=innerWidth; }
+    return x-half>=boxX && x+half<=innerWidth; }
   window.gazeHook=(tx,ty,m,ts)=>{
     if(!on) return null;
     if(ts>lookUntil){
@@ -2918,14 +2924,14 @@ const CP=(()=>{
     const {cx,cy,r}=geo();
     // the paper only goes where he's *looking away to* — not with every flick of his eyes
     const gx=glancing?look[0]:0, gy=glancing?look[1]:4.2, half=W/2+14;
-    const tx=clamp(cx+gx*15,half,innerWidth-half);          // never off the edge (rotation + tilt included)
+    const tx=clamp(cx+gx*15,boxX+half,innerWidth-half);     // never off the edge (rotation + tilt included)
     const dx=tx-cx, clear=Math.abs(dx)-(W/2+r*.62);          // > 0: it's fully beside his face, so it may come up
     const under=cy+r*.56+H/2+2, side=clamp(clear/(r*.4),0,1);
     const yMin=under+(cy-r*.5-under)*side;
     const ty=clamp(Math.max(cy+r*.5+gy*6,yMin)+Math.sin(ts/1400)*.8,H/2+4,innerHeight-H/2-4);
     if(!pos){ sp.x=cx; sp.y=cy+r*.4; sp.vx=sp.vy=0; }      // comes out from in front of him
     sp.vx+=((tx-sp.x)*45-sp.vx*9.5)*dt; sp.vy+=((ty-sp.y)*45-sp.vy*9.5)*dt; sp.x+=sp.vx*dt; sp.y+=sp.vy*dt;
-    sp.x=clamp(sp.x,half-6,innerWidth-half+6);              // a springy overshoot mustn't poke out of the window
+    sp.x=clamp(sp.x,boxX+half-6,innerWidth-half+6);         // a springy overshoot mustn't poke out of the window
     sp.r+=(clamp(sp.vx*.02,-6,6)-sp.r)*Math.min(1,dt*8);   // tips a little only while it's moving
     pos={x:sp.x,y:sp.y,cx,cy};
     const turn=clamp((sp.x-cx)/(r+W/2),-1,1);

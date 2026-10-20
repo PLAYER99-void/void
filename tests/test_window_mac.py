@@ -4,8 +4,10 @@ resize he didn't ask for is put straight back. Qt's offscreen platform and a fak
     python3 -m unittest discover -s tests
 """
 import ctypes
+import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,6 +24,19 @@ if MAC:
         import window_win  # noqa: E402
     except ImportError:
         window_win = None
+
+
+def setUpModule():
+    """His saved spot goes to a folder of the tests' own, not the real one (undocking saves it)."""
+    global _data
+    if MAC and window_win:
+        _data = tempfile.TemporaryDirectory()
+        window_win.DATA, window_win.POS_FILE = Path(_data.name), Path(_data.name) / "pos.json"
+
+
+def tearDownModule():
+    if MAC and window_win:
+        _data.cleanup()
 
 
 @unittest.skipUnless(MAC, "macOS only")
@@ -313,7 +328,7 @@ class BarInset(unittest.TestCase):
                                  | Qt.NoDropShadowWindowHint)
                 self.cur_w, self.wide_shift, self.hover, self.bar, self.bar_home = window_win.W, 0, False, False, None
                 self.own_pos, self.unresize_due, self.want_panel, self.want_code, self.want_bar = None, False, False, False, False
-                self.glide_n, self.bar_inset = 0, 0
+                self.glide_n, self.bar_inset, self.box_l = 0, 0, 0
                 self.save_t = window_win.QTimer(self, singleShot=True, interval=700)
                 self.setGeometry(300, 200, window_win.W, window_win.H)
                 self._watch_screens()
@@ -470,6 +485,113 @@ class BarInset(unittest.TestCase):
         self.insets["bottom"] = 92
         self.dock("bottom")
         self.assertEqual(self.win._ghost_rect()[1], self.win.y() + window_win.H - 52 - 92)
+
+
+@unittest.skipUnless(MAC and window_win, "macOS with PySide6 only")
+class Room(unittest.TestCase):
+    """His terminal coming out or going, or a panel opening or closing, never moves the window or him in it: the room
+    on his left is always there and the page is only told how much of it to use. (Moving both, the page a frame behind
+    the window showed him 100 px off for a frame.)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        test = self
+        fake = type("Cocoa", (), {"keep_on_all_spaces": staticmethod(lambda w: None), "no_resize": staticmethod(lambda w: None),
+                                  "unconstrained": staticmethod(lambda w: None),
+                                  "set_click_through": staticmethod(lambda w, on: None)})
+        self.saved = window_win.winsys, window_win.QCursor
+        window_win.winsys = fake
+        self.mouse = (0, 0)
+        window_win.QCursor = type("Cursor", (), {"pos": staticmethod(lambda: QPoint(*test.mouse))})
+        js, moves = self.js, self.moves = [], []
+        self.win = None
+
+        class Win(window_win.VoidWindow):
+            def __init__(self, x):                                       # just the window: no page, server or threads
+                Qt = window_win.Qt
+                QWidget.__init__(self, None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+                                 | Qt.NoDropShadowWindowHint)
+                self.cur_w, self.wide_shift, self.box_l = window_win.W + window_win.ROOM, window_win.ROOM, 0
+                self.hover, self.bar, self.bar_home, self.through, self.look_t = False, False, None, None, 0.0
+                self.own_pos, self.unresize_due, self.want_panel, self.want_code, self.want_bar = None, False, False, False, False
+                self.glide_n, self.bar_inset = 0, 0
+                self.save_t = window_win.QTimer(self, singleShot=True, interval=700)
+                self.poll = window_win.QTimer(self, interval=33)
+                self.setGeometry(x - self.wide_shift, 100, self.cur_w, window_win.H)
+
+            def moveEvent(self, ev):
+                moves.append(self.x())
+                super().moveEvent(ev)
+
+            def _js(self, code):
+                js.append(code)
+        self.Win = Win
+
+    def tearDown(self):
+        if self.win:
+            self.win.close()
+            self.win.deleteLater()
+        self.settle()
+        window_win.winsys, window_win.QCursor = self.saved
+
+    def settle(self, s=0.0):
+        import time
+        end = time.monotonic() + s
+        while True:
+            self.app.processEvents()
+            if time.monotonic() >= end:
+                return
+            time.sleep(0.01)
+
+    def make(self, x):
+        self.win = self.Win(x)
+        self.win.show()
+        self.settle()
+        del self.moves[:], self.js[:]
+        return self.win
+
+    def say(self, *msgs):
+        for m in msgs:
+            self.win._on_msg(m)
+            self.settle()
+
+    def test_terminal_and_panels_never_move_him(self):
+        w = self.make(300)
+        x = w.x()
+        self.say("code:on")
+        self.assertEqual((w.x(), self.moves), (x, []))                   # the window didn't move…
+        self.assertEqual(w.width(), window_win.W + window_win.ROOM + window_win.CODE_SIDE)   # (it grows on the right)
+        self.say("code:off", "wide:on", "code:on", "code:off", "wide:off")
+        self.assertEqual((w.x(), self.moves), (x, []))                   # …and never did…
+        self.assertEqual([c for c in self.js if "voidLayout" in c], [])  # …nor did he in it
+        self.assertEqual(self.js, ["window.voidRoom&&voidRoom(100)", "window.voidRoom&&voidRoom(0)",
+                                   "window.voidRoom&&voidRoom(130)", "window.voidRoom&&voidRoom(0)"])
+        self.assertEqual(w.width(), window_win.W + window_win.ROOM)
+
+    def test_by_the_screen_edge_only_what_is_on_it(self):
+        g = window_win.QGuiApplication.primaryScreen().availableGeometry()
+        w = self.make(g.left() + 40)
+        self.say("wide:on")
+        self.assertEqual(self.js, ["window.voidRoom&&voidRoom(40)"])     # (the panel stays on the screen)
+        self.assertEqual(self.moves, [])
+
+    def test_as_the_cursor_his_ball_is_on_it_and_back_home_he_is_saved_where_he_was(self):
+        w = self.make(300)
+        x = w.x()
+        self.say("code:on")
+        w.set_hover(True)
+        self.assertEqual((self.js[-2:], w.width()), (["window.voidRoom&&voidRoom(0)", "window.voidHover&&voidHover(true)"],
+                                                     window_win.W + window_win.ROOM))
+        self.mouse = (600, 400)
+        w._follow()
+        self.assertEqual((w.x() + w.wide_shift + window_win.BALL[0], w.y() + window_win.BALL[1]), self.mouse)
+        w.set_hover(False)
+        self.settle(0.8)                                                 # (glides home, then saves his spot)
+        self.assertEqual(w.x(), x)
+        self.assertEqual(json.loads(window_win.POS_FILE.read_text()), {"x": 300, "y": 100})
 
 
 if __name__ == "__main__":
