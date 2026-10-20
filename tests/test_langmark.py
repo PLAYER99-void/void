@@ -69,6 +69,53 @@ class Markup(unittest.TestCase):
         self.assertEqual(ph, "hajao mijazaki")
 
 
+class Guess(unittest.TestCase):
+    """The fallback for a title Claude forgot to mark: only what's clearly foreign, never English."""
+
+    def test_marks_clear_foreign_titles(self):
+        for t, want in (("Le Toit du Monde", "{fr:Le Toit du Monde}"),           # the real miss
+                        ("Le Toit Du Monde", "{fr:Le Toit Du Monde}"),
+                        ("Les Jardins de Minuit", "{fr:Les Jardins de Minuit}"),
+                        ("Écailles de lune", "{fr:Écailles de lune}"),
+                        ("Der Himmel über Berlin", "{de:Der Himmel über Berlin}"),
+                        ("La Vie Est Prelude", "{fr:La Vie Est Prelude}"),
+                        ("Les Misérables", "{fr:Les Misérables}"),
+                        ("El Laberinto del Fauno", "{es:El Laberinto del Fauno}"),
+                        ("Die Zauberflöte", "{de:Die Zauberflöte}")):
+            self.assertEqual(langmark.guess(t), want, t)
+
+    def test_in_a_sentence(self):
+        self.assertEqual(langmark.guess("[happy] Tonight I played Le Toit Du Monde by Alcest."),
+                         "[happy] Tonight I played {fr:Le Toit Du Monde} by Alcest.")
+        self.assertEqual(langmark.guess("Then Les Jardins de Minuit, and Alcest's Le Toit du Monde."),
+                         "Then {fr:Les Jardins de Minuit}, and Alcest's {fr:Le Toit du Monde}.")
+        self.assertEqual(langmark.guess("I loved “écailles de lune”."), "I loved “{fr:écailles de lune}”.")
+        self.assertEqual(langmark.guess("Le Toit du Monde die hard fans"), "{fr:Le Toit du Monde} die hard fans")
+
+    def test_english_stays_english(self):
+        for t in ("Die Hard", "The Art of Sombre Ecstacy", "Death Atlas", "Dead End Residents", "Bring Back the Plague",
+                  "La Jolla", "We decided the design was dead, despite the delay.", "De La Soul", "La La Land",
+                  "Die Die My Darling", "Van Der Graaf Generator", "Robert De Niro", "Leonardo da Vinci",
+                  "Los Angeles", "Mötley Crüe", "Pokémon", "Then De La Soul played Le Freak", "Van Halen et Le Tigre",
+                  "I watched Die Hard and Das Boot", "Do You Know Da Way", "Lana Del Rey", "LE TOIT DU MONDE",
+                  "Sen to Chihiro", "Sen to Chihiro no Kamikakushi"):                  # rōmaji: out of scope
+            self.assertEqual(langmark.guess(t), t, t)
+
+    def test_leaves_code_marks_and_tags_alone(self):
+        for t in ("`{id:5}` in code", "see `Le Toit du Monde` here", "```\nLe Toit du Monde\n```",
+                  "{fr:Le Toit du Monde}", "{es:Le Toit du Monde}", "{xx:Le Toit du Monde}", "[Le Toit du Monde]", ""):
+            self.assertEqual(langmark.guess(t), t, t)
+        self.assertEqual(langmark.guess("{fr:Le Toit du Monde} and Les Jardins de Minuit"),
+                         "{fr:Le Toit du Monde} and {fr:Les Jardins de Minuit}")
+        self.assertEqual(langmark.guess(None), "")
+
+    def test_phonemes_say_the_unmarked_title_in_french(self):
+        self.assertEqual(langmark.phonemes("I loved Le Toit du Monde.", fake_phonemize),
+                         "<en-us:I loved> <fr-fr:Le Toit du Monde> <en-us:.>")
+        self.assertIsNone(langmark.phonemes("I loved Die Hard.", fake_phonemize))
+        self.assertEqual(langmark.unmark("I loved Le Toit du Monde."), "I loved Le Toit du Monde.")   # captions
+
+
 try:
     from kokoro_onnx.tokenizer import Tokenizer
     REAL = Tokenizer().phonemize
