@@ -371,7 +371,7 @@ def sync_autostart():
             link.unlink(missing_ok=True)
         return
     if MAC:                                   # a LaunchAgent that runs `void show` when you log in
-        launcher = shutil.which("void") or str(Path.home() / ".local/bin/void")
+        launcher = macsys.bundle_launcher(APP_DIR) or shutil.which("void") or str(Path.home() / ".local/bin/void")
         try:
             if on:
                 import plistlib

@@ -51,6 +51,16 @@ def cache_dir():
     return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "void"
 
 
+def bundle_launcher(app_dir):
+    """The Contents/MacOS/Void of the Void.app that `app_dir` (the app folder, inside Contents/Resources) lives in,
+    or None when it isn't inside an app bundle (a checkout or a `void` install)."""
+    for p in Path(app_dir).absolute().parents:
+        if p.suffix == ".app":
+            launcher = p / "Contents" / "MacOS" / "Void"
+            return str(launcher) if launcher.is_file() else None
+    return None
+
+
 # ---------------------------------------------------------------- which speakers and mics there are (Core Audio's own)
 class _Addr(ctypes.Structure):
     _fields_ = [("sel", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("elem", ctypes.c_uint32)]
