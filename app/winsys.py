@@ -5,6 +5,7 @@ On Linux, server.py and quick.py use command-line tools for these (parecord, pap
 everything else in Void is the same on both.
 """
 import atexit
+import contextlib
 import ctypes
 import json
 import os
@@ -65,6 +66,7 @@ def dpi_aware():
 devices = None      # () → anything that changes when the default output / input or the device list does (macsys sets
 #                     it: Core Audio's own). None: can't tell (Windows), so only a dead stream starts PortAudio over
 STALL = 1.5         # seconds without a callback: that stream's device has gone
+LOCK_WAIT = 0.25    # how long a question about the devices waits for _PA.lock (a stream's open may sit on a permission prompt)
 FIRST = 1.0         # how long a new stream gets to call back the first time
 
 
@@ -75,6 +77,20 @@ class _PA:
     stale = False                   # a stream died or never ran: start over before the next one opens
     done = False                    # Void is quitting: PortAudio has stopped for good, nothing opens again
     hooked = False                  # stop() is registered to run at exit
+    mics = None                     # the last mic list list_mics() read (what it answers while an open holds the lock)
+    plays = True                    # the last answer of can_play()
+
+    @classmethod
+    @contextlib.contextmanager
+    def brief(cls):
+        """Holds the lock for the block, or yields False after LOCK_WAIT without it: a stream open can sit on macOS's
+        microphone permission prompt for as long as that's on screen, and nothing that only asks may wait behind it."""
+        got = cls.lock.acquire(timeout=LOCK_WAIT)
+        try:
+            yield got
+        finally:
+            if got:
+                cls.lock.release()
 
 
 def stop():
@@ -292,10 +308,14 @@ def list_mics():
     """Inputs for Settings → Voice (the id is the device name; any part of it works)."""
     try:
         import sounddevice as sd
-        _fresh(sd, close=False)                            # (a fresh list if nothing's open: a mic may have come)
-        api = sd.query_devices(kind="input")["hostapi"]     # just the default driver's list (no MME/WASAPI repeats)
-        return [{"id": d["name"], "label": d["name"]} for d in sd.query_devices()
-                if d["max_input_channels"] > 0 and d["hostapi"] == api]
+        with _PA.brief() as got:
+            if not got:                                    # (a stream is opening, maybe stuck on the permission prompt)
+                return list(_PA.mics or [])
+            _fresh(sd, close=False)                        # (a fresh list if nothing's open: a mic may have come)
+            api = sd.query_devices(kind="input")["hostapi"]  # just the default driver's list (no MME/WASAPI repeats)
+            _PA.mics = [{"id": d["name"], "label": d["name"]} for d in sd.query_devices()
+                        if d["max_input_channels"] > 0 and d["hostapi"] == api]
+            return list(_PA.mics)
     except Exception:  # noqa: BLE001
         return []
 
@@ -354,10 +374,15 @@ class Player:
 def can_play():
     try:
         import sounddevice as sd
-        _fresh(sd, close=False)
-        sd.query_devices(kind="output")
-        return True
+        with _PA.brief() as got:
+            if not got:
+                return _PA.plays                           # (as last answered: a stream is opening)
+            _fresh(sd, close=False)
+            sd.query_devices(kind="output")
+            _PA.plays = True
+            return True
     except Exception:  # noqa: BLE001
+        _PA.plays = False
         return False
 
 

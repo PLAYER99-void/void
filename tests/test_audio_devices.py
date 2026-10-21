@@ -117,6 +117,7 @@ class Base(unittest.TestCase):
         self._first, winsys.FIRST = winsys.FIRST, 0.05
         winsys._PA.live.clear()
         winsys._PA.sig, winsys._PA.stale, winsys._PA.done = None, False, False
+        winsys._PA.mics, winsys._PA.plays = None, True
         winsys._PA.hooked = True                           # (not at this process's exit: Quitting does that)
         s = self.sd.system
         winsys.devices = (lambda: (s["out"], s["in"], tuple(s["devs"]))) if self.mac else None
@@ -353,6 +354,94 @@ class CoreAudio(unittest.TestCase):
             self.assertTrue(set(out + inp) - {0} <= set(devs))   # (0: no such device right now)
         finally:
             winsys.devices = None
+
+
+class StuckOpen(Base):
+    """A mic stream's open is stuck (macOS's microphone permission prompt) holding _PA.lock: asking about devices
+    must still answer at once."""
+
+    def setUp(self):
+        super().setUp()
+        import threading
+        self.threading = threading
+        self._wait, winsys.LOCK_WAIT = getattr(winsys, "LOCK_WAIT", 0.25), 0.05
+        self.release, self.inside = threading.Event(), threading.Event()
+        owner = types.SimpleNamespace(first=threading.Event(), stream=None)
+
+        def make():
+            self.inside.set()
+            self.release.wait(10)                          # (the permission prompt, still on screen)
+            raise ValueError("denied")
+
+        def stuck():
+            try:
+                winsys._open(self.sd, owner, make)
+            except ValueError:
+                pass
+
+        self.t = threading.Thread(target=stuck, daemon=True)
+        self.t.start()
+        self.assertTrue(self.inside.wait(5))
+
+    def tearDown(self):
+        self.release.set()
+        self.t.join(5)
+        winsys.LOCK_WAIT = self._wait
+        super().tearDown()
+
+    def answer(self, fn):
+        out = []
+        t = self.threading.Thread(target=lambda: out.append(fn()), daemon=True)
+        t.start()
+        t.join(2)
+        self.assertFalse(t.is_alive(), "blocked behind the stuck open")
+        return out[0]
+
+    def test_can_play_answers(self):
+        self.assertTrue(self.answer(winsys.can_play))
+
+    def test_list_mics_answers(self):
+        self.assertIsInstance(self.answer(winsys.list_mics), list)
+
+    def test_list_mics_keeps_the_last_list(self):
+        self.release.set()
+        self.t.join(5)
+        known = winsys.list_mics()
+        self.assertEqual([m["id"] for m in known], ["Built-in Mic"])
+        self.release.clear()
+        self.inside.clear()
+        self.test_list_mics_answers_after(known)
+
+    def test_list_mics_answers_after(self, known=None):
+        if known is None:
+            return
+        owner = types.SimpleNamespace(first=self.threading.Event(), stream=None)
+        def make():
+            self.inside.set()
+            self.release.wait(10)
+            raise ValueError("denied")
+        t = self.threading.Thread(target=lambda: self._try(owner, make), daemon=True)
+        t.start()
+        self.assertTrue(self.inside.wait(5))
+        self.assertEqual(self.answer(winsys.list_mics), known)
+        self.release.set()
+        t.join(5)
+
+    def _try(self, owner, make):
+        try:
+            winsys._open(self.sd, owner, make)
+        except ValueError:
+            pass
+
+    def test_state_info_answers(self):
+        try:
+            import server
+        except Exception as e:  # noqa: BLE001
+            self.skipTest(f"server.py doesn't import here: {e}")
+        from unittest import mock
+        with mock.patch.object(server, "OSYS", winsys), mock.patch.object(server.quick, "projects", lambda: {}):
+            st = self.answer(server.state_info)
+        self.assertIn("voice_native", st)
 
 
 if __name__ == "__main__":
