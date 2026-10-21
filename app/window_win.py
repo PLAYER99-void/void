@@ -32,6 +32,7 @@ for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF
         _s.reconfigure(encoding="utf-8", errors="replace")
 
 DATA = winsys.data_dir()
+SELFTEST = False                                                         # --selftest / --selftest-bar run (main() sets it)
 
 
 class Started:
@@ -164,9 +165,6 @@ def parse_combo(text):
     else:
         return None
     return mods, vk
-
-
-SELFTEST = False                                                         # --selftest / --selftest-bar run
 
 
 def log(msg):
