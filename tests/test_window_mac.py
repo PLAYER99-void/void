@@ -598,12 +598,19 @@ if __name__ == "__main__":
     unittest.main()
 
 
+_loaded = None
+
+
 def _load_window_win():
     """window_win with or without Qt: where PySide6 isn't installed its modules are stubbed, enough to import the file
     (the quit and server-ownership code under test never touches Qt)."""
+    global _loaded
     if MAC and window_win:
         return window_win
+    if _loaded:
+        return _loaded
     import types
+    stubbed = []
     try:
         import PySide6  # noqa: F401
     except ImportError:
@@ -624,7 +631,12 @@ def _load_window_win():
         for n in ("PySide6", "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWebChannel", "PySide6.QtWebEngineCore",
                   "PySide6.QtWebEngineWidgets", "PySide6.QtWidgets"):
             sys.modules[n] = Stub(n)
+            stubbed.append(n)
     import window_win as w
+    if stubbed:                                                       # (the stubs stay out of the other test files)
+        for n in stubbed + ["window_win"]:
+            sys.modules.pop(n, None)
+    _loaded = w
     return w
 
 
