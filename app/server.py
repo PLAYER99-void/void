@@ -64,6 +64,9 @@ STATE_PATH = DATA_DIR / "state.json"
 # password helper) and only works for those: asking you to approve, looking at the screen, and the sudo card in root mode.
 TOKEN = secrets.token_urlsafe(24)
 TOOL_TOKEN = secrets.token_urlsafe(24)
+# not a password: which run this is. In runtime.json and in every /api/state answer, so a launcher can tell its own
+# server from another Void's on the same port without the token ever going on a command line
+RUN_ID = secrets.token_hex(8)
 TOOL_PATHS = {"/api/approve", "/api/capture", "/api/askpass"}
 
 VOICE_PROMPT = (
@@ -2861,7 +2864,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/state":                      # without the window's token: just "it's running" and the version
             if secrets.compare_digest(self.headers.get("X-Void-Token") or "", TOKEN):
                 return self._json(state_info())
-            return self._json({"version": VERSION})
+            return self._json({"version": VERSION, "id": RUN_ID})
         if p == "/":
             p = "/index.html"
         f = (STATIC / p.lstrip("/")).resolve()
@@ -3399,7 +3402,7 @@ def main():
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         fd = os.open(rt, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"port": CFG["port"], "token": TOKEN, "tool_token": TOOL_TOKEN}, f)
+            json.dump({"port": CFG["port"], "token": TOKEN, "tool_token": TOOL_TOKEN, "id": RUN_ID}, f)
     except OSError:
         pass
     srv.daemon_threads = True

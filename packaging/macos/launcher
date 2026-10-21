@@ -12,8 +12,11 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/us
 mkdir -p "$ROOT"
 PORT="$("$PY" "$APP/server.py" --print-port)"
 URL="http://127.0.0.1:$PORT/"
-# up = OUR server answers: it knows the token in our runtime.json (another Void on the same port doesn't, so we never attach to it)
-up(){ case "$(curl -fs -H "X-Void-Token: $(sed -n 's/.*"token": "\([^"]*\)".*/\1/p' "$ROOT/runtime.json" 2>/dev/null)" "${URL}api/state")" in *'"cwd"'*) ;; *) return 1 ;; esac; }
+# up = OUR server answers: its run id is the one in our runtime.json (another Void on the same port has its own, so we never attach to it)
+# (a runtime.json with no id was written by an older server of ours, still running from before an update: that one's ours)
+up(){ [ -f "$ROOT/runtime.json" ] || return 1
+  ID="$(sed -n 's/.*"id": "\([0-9a-f]*\)".*/\1/p' "$ROOT/runtime.json")"; S="$(curl -fs --max-time 2 "${URL}api/state")" || return 1
+  [ -z "$ID" ] || case "$S" in *"\"id\": \"$ID\""*) ;; *) return 1 ;; esac; }
 if ! up; then
   nohup "$PY" "$APP/server.py" >>"$LOG" 2>&1 </dev/null &
   for _ in $(seq 60); do up && break; sleep 0.1; done

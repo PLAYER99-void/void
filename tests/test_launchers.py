@@ -22,21 +22,24 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "app"))
 import launch_win  # noqa: E402
 
-# a stand-in for app/server.py: the same port rule, runtime.json and /api/state answers, nothing else
+# a stand-in for app/server.py: the same port rule, runtime.json and /api/state answers, nothing else. Like the real
+# one with the mic waiting on Core Audio, the full state (with the window's token) doesn't answer for a long while.
 FAKE_SERVER = r'''
-import json, os, secrets, signal, sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import json, os, secrets, signal, sys, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as HTTPServer
 PORT = int(os.environ["FAKE_PORT"])
 if "--print-port" in sys.argv:
     print(PORT); sys.exit()
 signal.alarm(30)                                   # never outlives the test, whatever happens to it
 data = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "void")
-tok = secrets.token_urlsafe(24)
+tok, rid = secrets.token_urlsafe(24), secrets.token_hex(8)
+old = {} if os.environ.get("FAKE_OLD") else {"id": rid}    # FAKE_OLD: a server from before run ids
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
-        mine = self.headers.get("X-Void-Token") == tok
-        body = json.dumps({"version": "0", "cwd": "/"} if mine else {"version": "0"}).encode()
+        if self.headers.get("X-Void-Token") == tok:
+            time.sleep(20)
+        body = json.dumps({"version": "0", **old}).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
         self.wfile.write(body)
     def log_message(self, *a): pass
@@ -44,7 +47,7 @@ class H(BaseHTTPRequestHandler):
 srv = HTTPServer(("127.0.0.1", PORT), H)            # (port taken → dies here, like the real one)
 os.makedirs(data, exist_ok=True)
 open(os.path.join(data, "server.pid"), "w").write(str(os.getpid()))
-json.dump({"port": PORT, "token": tok, "tool_token": "t"}, open(os.path.join(data, "runtime.json"), "w"))
+json.dump({"port": PORT, "token": tok, "tool_token": "t", **old}, open(os.path.join(data, "runtime.json"), "w"))
 srv.serve_forever()
 '''
 FAKE_WINDOW = r'''
@@ -65,6 +68,7 @@ class Launchers(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.port = free_port()
         self.pids = []
+        self.extra = {}
         self.addCleanup(self.kill_servers)
 
     def kill_servers(self):
@@ -76,7 +80,7 @@ class Launchers(unittest.TestCase):
 
     def env(self, home):
         return {"HOME": str(home), "XDG_DATA_HOME": str(home / "data"), "PATH": "/usr/bin:/bin",
-                "FAKE_PORT": str(self.port)}
+                "FAKE_PORT": str(self.port), **self.extra}
 
     def fake_app(self, app):
         app.mkdir(parents=True)
@@ -155,17 +159,22 @@ class Launchers(unittest.TestCase):
     def test_bin_void_never_attaches_to_another_void(self):
         self.check_never_attaches(self.home_install())
 
+    def test_mac_bundle_takes_its_older_server_from_before_an_update(self):
+        self.extra = {"FAKE_OLD": "1"}
+        self.check_own_server(self.mac_bundle())
+
+    def test_bin_void_takes_its_older_server_from_before_an_update(self):
+        self.extra = {"FAKE_OLD": "1"}
+        self.check_own_server(self.home_install())
+
 
 class WindowsLauncherUp(unittest.TestCase):
     """launch_win.up(): the same rule as the shell launchers, in Python."""
 
     def setUp(self):
-        tok = "ours"
-
         class H(BaseHTTPRequestHandler):
             def do_GET(self):
-                body = json.dumps({"version": "0", "cwd": "/"} if self.headers.get("X-Void-Token") == tok
-                                  else {"version": "0"}).encode()
+                body = json.dumps({"version": "0", "id": "0123abcd"}).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -185,16 +194,20 @@ class WindowsLauncherUp(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def runtime(self, tok):
-        (self.tmp / "runtime.json").write_text(json.dumps({"port": 0, "token": tok, "tool_token": "t"}))
+    def runtime(self, **rid):
+        (self.tmp / "runtime.json").write_text(json.dumps({"port": 0, "token": "x", "tool_token": "t", **rid}))
 
     def test_up_when_its_own_server_answers(self):
-        self.runtime("ours")
+        self.runtime(id="0123abcd")
         self.assertTrue(launch_win.up())
 
     def test_not_up_when_another_void_answers(self):
-        self.runtime("someone else's")
+        self.runtime(id="ffff0000")
         self.assertFalse(launch_win.up())
+
+    def test_up_for_its_older_server_from_before_an_update(self):
+        self.runtime()
+        self.assertTrue(launch_win.up())
 
     def test_not_up_without_runtime_json(self):
         self.assertFalse(launch_win.up())

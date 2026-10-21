@@ -43,12 +43,13 @@ URL = f"http://127.0.0.1:{port()}/"
 
 
 def up():
-    """OUR server answers: it knows the token in our runtime.json (another Void on the same port doesn't, so we never
-    attach to it)."""
+    """OUR server answers: its run id is the one in our runtime.json (another Void on the same port has its own, so we
+    never attach to it). A runtime.json with no id was written by an older server of ours, still running from before an
+    update: that one's ours."""
     try:
-        tok = json.loads((DATA / "runtime.json").read_text())["token"]
-        req = urllib.request.Request(URL + "api/state", headers={"X-Void-Token": tok})
-        return "cwd" in json.load(urllib.request.urlopen(req, timeout=1))
+        rid = json.loads((DATA / "runtime.json").read_text()).get("id")
+        got = json.load(urllib.request.urlopen(URL + "api/state", timeout=1)).get("id")
+        return rid is None or got == rid
     except Exception:  # noqa: BLE001
         return False
 
