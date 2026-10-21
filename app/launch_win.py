@@ -43,12 +43,12 @@ URL = f"http://127.0.0.1:{port()}/"
 
 
 def up():
-    import urllib.error
+    """OUR server answers: it knows the token in our runtime.json (another Void on the same port doesn't, so we never
+    attach to it)."""
     try:
-        urllib.request.urlopen(URL + "api/state", timeout=1)
-        return True
-    except urllib.error.HTTPError:                                 # it answered: it's running
-        return True
+        tok = json.loads((DATA / "runtime.json").read_text())["token"]
+        req = urllib.request.Request(URL + "api/state", headers={"X-Void-Token": tok})
+        return "cwd" in json.load(urllib.request.urlopen(req, timeout=1))
     except Exception:  # noqa: BLE001
         return False
 
