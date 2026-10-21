@@ -407,6 +407,12 @@ class StuckOpen(Base):
                            capture_output=True, text=True, timeout=20)
         self.assertEqual(r.stdout.split(), ["last"], r.stderr)
 
+    def test_sigterm_leaves_sounddevices_exit_handler_unrun(self):
+        """sounddevice registers _exit_handler (Pa_Terminate) at import: with the open stuck, it must not run."""
+        r = subprocess.run([sys.executable, "-c", STUCK_QUIT_REAL_HANDLER, str(HERE), str(HERE.parent / "app")],
+                           capture_output=True, text=True, timeout=20)
+        self.assertEqual(r.stdout.split(), ["last"], r.stderr)
+
     def test_can_play_answers(self):
         self.assertTrue(self.answer(winsys.can_play))
 
@@ -481,3 +487,9 @@ inside.wait(5)
 os.kill(os.getpid(), signal.SIGTERM)
 time.sleep(30)
 """
+
+STUCK_QUIT_REAL_HANDLER = STUCK_QUIT.replace(
+    "sd = sys.modules[\"sounddevice\"] = FakeSD()",
+    "sd = sys.modules[\"sounddevice\"] = FakeSD()\n"
+    "sd._exit_handler = lambda: print(\"pa_terminate\", flush=True)   # (as sounddevice's, registered at its import)\n"
+    "atexit.register(sd._exit_handler)")

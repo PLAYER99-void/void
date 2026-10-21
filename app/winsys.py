@@ -101,7 +101,10 @@ def stop():
     _PA.done = True                                        # (set first, lock or not: nothing opens after this)
     with _PA.brief() as got:
         if not got:                                        # a stream's open is stuck on the microphone permission
-            return                                         # prompt: quitting can't wait for it (the process exits anyway)
+            sd = sys.modules.get("sounddevice")            # prompt: quitting can't wait for it (the process exits anyway),
+            if sd is not None and hasattr(sd, "_exit_handler"):
+                atexit.unregister(sd._exit_handler)        # nor may sounddevice's own clean-up Pa_Terminate beside it
+            return
         for s in list(_PA.live):
             s.kill()
         sd = sys.modules.get("sounddevice")
