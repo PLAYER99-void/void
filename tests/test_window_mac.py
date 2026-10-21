@@ -596,3 +596,153 @@ class Room(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _load_window_win():
+    """window_win with or without Qt: where PySide6 isn't installed its modules are stubbed, enough to import the file
+    (the quit and server-ownership code under test never touches Qt)."""
+    if MAC and window_win:
+        return window_win
+    import types
+    try:
+        import PySide6  # noqa: F401
+    except ImportError:
+        class Dummy:
+            def __init__(self, *a, **k):
+                pass
+
+            def __call__(self, *a):
+                return a[0] if len(a) == 1 and callable(a[0]) else Dummy()
+
+        class Stub(types.ModuleType):
+            def __getattr__(self, name):
+                if name.startswith("__"):
+                    raise AttributeError(name)
+                c = type(name, (Dummy,), {})
+                setattr(self, name, c)
+                return c
+        for n in ("PySide6", "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWebChannel", "PySide6.QtWebEngineCore",
+                  "PySide6.QtWebEngineWidgets", "PySide6.QtWidgets"):
+            sys.modules[n] = Stub(n)
+    import window_win as w
+    return w
+
+
+@unittest.skipIf(sys.platform == "win32", "POSIX process groups")
+class StartedStop(unittest.TestCase):
+    """Started.stop: our own server is stopped by waitpid (not kill(pid, 0), which a zombie child passes for ever), a
+    selftest never stops one, and started.json goes only once the stop is decided."""
+
+    def setUp(self):
+        import subprocess
+        from unittest import mock
+        self.w = _load_window_win()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.data = Path(self.tmp.name)
+        p = mock.patch.object(self.w, "DATA", self.data)
+        p.start()
+        self.addCleanup(p.stop)
+        self.child = subprocess.Popen(["sleep", "60"], start_new_session=True)   # (our own child, like the server)
+        self.addCleanup(self._reap)
+        (self.data / "started.json").write_text(json.dumps({"pid": self.child.pid, "id": "abc"}))
+        (self.data / "runtime.json").write_text(json.dumps({"id": "abc", "pid": self.child.pid, "port": 1, "token": "t"}))
+        self.sent = []
+        real = os.killpg
+
+        def killpg(pid, sig):
+            self.sent.append(sig)
+            real(pid, sig)
+        p = mock.patch.object(os, "killpg", killpg)
+        p.start()
+        self.addCleanup(p.stop)
+        self.answer(json.dumps({"id": "abc"}))
+        self.addCleanup(setattr, self.w, "SELFTEST", getattr(self.w, "SELFTEST", False))
+        self.w.SELFTEST = False
+
+    def _reap(self):
+        if self.child.poll() is None:
+            self.child.kill()
+        self.child.wait()
+        self.tmp.cleanup()
+
+    def answer(self, body=None, error=None):
+        import io
+        from unittest import mock
+
+        def urlopen(url, timeout=None):
+            if error:
+                raise error
+            return io.BytesIO(body.encode())
+        p = mock.patch("urllib.request.urlopen", urlopen)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_own_child_is_reaped_not_waited_on_for_two_seconds(self):
+        import signal
+        import time
+        t = time.monotonic()
+        self.w.Started.stop()
+        self.assertLess(time.monotonic() - t, 1.0)
+        self.assertEqual(self.sent, [signal.SIGTERM])                 # (never the SIGKILL, mid-atexit)
+        self.assertIsNotNone(self.child.poll())
+
+    def test_selftest_never_stops_a_server(self):
+        self.w.SELFTEST = True
+        self.w.Started.stop()
+        self.assertEqual(self.sent, [])
+        self.assertIsNone(self.child.poll())
+        self.assertTrue((self.data / "started.json").exists())
+
+    def test_slow_state_keeps_the_record(self):
+        import socket
+        self.answer(error=socket.timeout("slow"))
+        self.w.Started.stop()
+        self.assertEqual(self.sent, [])
+        self.assertTrue((self.data / "started.json").exists())
+
+    def test_record_goes_once_the_stop_is_decided(self):
+        self.w.Started.stop()
+        self.assertFalse((self.data / "started.json").exists())
+
+    def test_a_server_that_isnt_ours_is_left_and_the_record_goes(self):
+        self.answer(json.dumps({"id": "someone else"}))
+        self.w.Started.stop()
+        self.assertEqual(self.sent, [])
+        self.assertIsNone(self.child.poll())
+        self.assertFalse((self.data / "started.json").exists())
+
+
+class QuitHandling(unittest.TestCase):
+    def setUp(self):
+        self.w = _load_window_win()
+
+    def test_sigterm_stops_our_server_and_quits(self):
+        import signal
+        from types import SimpleNamespace
+        from unittest import mock
+        old = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, old)
+        win = SimpleNamespace(quitting=False)
+        with mock.patch.object(self.w.Started, "stop") as stop, mock.patch.object(self.w.QApplication, "quit", create=True) as quit_:
+            self.w.install_sigterm_handler(win)
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        stop.assert_called_once()
+        quit_.assert_called_once()
+        self.assertTrue(win.quitting)
+
+    def test_watchdog_stops_when_quitting(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        started, sleeps = [], []
+        win = SimpleNamespace(quitting=False, _server_up=lambda: False, _start_server=lambda: started.append(1))
+
+        def sleep(s):
+            sleeps.append(s)
+            if len(sleeps) == 1:
+                win.quitting = True                                   # (Quit pressed while he sleeps)
+            if len(sleeps) > 8:
+                raise RuntimeError("the watchdog is still going")
+        with mock.patch.object(self.w, "MAC", True), mock.patch.object(self.w.time, "sleep", sleep):
+            self.w.VoidWindow._watch_server(win)
+        self.assertEqual(started, [])
+        self.assertLessEqual(len(sleeps), 2)

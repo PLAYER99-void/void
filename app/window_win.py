@@ -50,21 +50,23 @@ class Started:
 
     @classmethod
     def stop(cls):
-        if sys.platform == "win32":
+        if sys.platform == "win32" or SELFTEST:                          # (a selftest never stops a server)
             return
         try:
             rec = json.loads(cls._file().read_text())
             pid, rid = int(rec["pid"]), rec["id"]
-            cls._file().unlink()
             port = json.loads((DATA / "runtime.json").read_text())
             if not rid or port.get("id") != rid or port.get("pid") != pid:   # (not a racer's dead or reused pid)
+                cls._forget()
                 return
             import urllib.request
             with urllib.request.urlopen(f"http://127.0.0.1:{int(port['port'])}/api/state", timeout=2) as r:
                 if json.load(r).get("id") != rid:
+                    cls._forget()
                     return
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            return
+            return                                                        # (undecided: the record stays for next time)
+        cls._forget()
         import signal
         try:
             group = os.getpgid(pid) == pid                                # (never the group of whoever launched it)
@@ -77,10 +79,29 @@ class Started:
                 return
             for _ in range(20 if sig == signal.SIGTERM else 5):
                 time.sleep(0.1)
-                try:
-                    os.kill(pid, 0)
-                except OSError:
+                if cls._gone(pid):
                     return
+
+    @classmethod
+    def _forget(cls):
+        try:
+            cls._file().unlink()
+        except OSError:
+            pass
+
+    @staticmethod
+    def _gone(pid):
+        """Has the server gone? Ours is our own child (a zombie until reaped, which kill(pid, 0) never notices): reap it."""
+        try:
+            return os.waitpid(pid, os.WNOHANG)[0] == pid
+        except ChildProcessError:                                         # not our child: just ask whether it exists
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            return False
+        except OSError:
+            return True
 
 
 if __name__ == "__main__" and sys.argv[1:2] in (["--started"], ["--stop-started"]):   # the launcher's way in (no Qt)
@@ -282,8 +303,9 @@ class VoidWindow(QWidget):
         self.remote.cmd.connect(self._remote_cmd)
         threading.Thread(target=self._serve, daemon=True).start()
         self.base = url.split("?")[0]
+        self.quitting = False                                            # (stops the watchdog: no restart while quitting)
         threading.Thread(target=self._watch_server, daemon=True).start()
-        QApplication.instance().aboutToQuit.connect(Started.stop)           # (macOS's own Quit too)
+        QApplication.instance().aboutToQuit.connect(self._about_to_quit)   # (macOS's own Quit too)
         self.ptt, self.ptt_held = None, False                           # the push-to-talk combo (the page sends it)
         threading.Thread(target=self._ptt_hook, daemon=True).start()
         QTimer.singleShot(1500, self._tell_page)
@@ -647,8 +669,7 @@ class VoidWindow(QWidget):
 
     def _remote_cmd(self, c):
         if c == "quit":
-            Started.stop()
-            QApplication.quit()
+            quit_app(self)
         elif c == "toggle":
             if self.hover:
                 self._js("window.voidCmd&&voidCmd('home')")
@@ -703,12 +724,18 @@ class VoidWindow(QWidget):
                                  env={**os.environ, "VOID_RUN_ID": rid})
         Started.record(p.pid, rid)
 
+    def _about_to_quit(self):
+        self.quitting = True
+        Started.stop()
+
     def _watch_server(self):
         """If the server stops (a crash), start it again instead of leaving him deaf with "failed to fetch". The page
         reconnects by itself: a new server means a new token, and it reloads when it sees "forbidden"."""
         misses, last = 0, 0.0
-        while True:
+        while not self.quitting:
             time.sleep(3)
+            if self.quitting:
+                return
             if self._server_up():
                 misses = 0
                 continue
@@ -873,6 +900,20 @@ class VoidWindow(QWidget):
         step()
 
 
+def quit_app(win):
+    """Quit the way the tray's Quit does: stop the watchdog, then our own server (if it is ours), then Qt."""
+    win.quitting = True
+    Started.stop()
+    QApplication.quit()
+
+
+def install_sigterm_handler(win):
+    """SIGTERM (a crash handler, launchctl stop) quits the same way, since the server is in a group of its own and
+    would otherwise outlive him. Qt needs the interpreter woken now and then to run the handler: see main()."""
+    import signal
+    signal.signal(signal.SIGTERM, lambda signum, frame: quit_app(win))
+
+
 def name_qt_app(app):
     """Qt names itself after the script (window_win.py) and, on macOS, writes its own cache (the Qt Quick pipeline cache)
     to ~/Library/Caches/<that name> whatever HOME says. Call him Void and send that cache to a folder of his own under
@@ -937,6 +978,10 @@ def main():
     win = VoidWindow(url)
     if cmd in ("listen", "look", "live", "hover", "hover-on"):
         QTimer.singleShot(1800, lambda: win._remote_cmd(cmd))         # first launch: let the page load, then do it
+    if sys.platform != "win32":
+        install_sigterm_handler(win)
+        wake = QTimer(app, interval=300, timeout=lambda: None)          # (lets Python see the signal while Qt runs)
+        wake.start()
     sys.exit(app.exec())
 
 
