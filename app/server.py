@@ -66,7 +66,7 @@ TOKEN = secrets.token_urlsafe(24)
 TOOL_TOKEN = secrets.token_urlsafe(24)
 # not a password: which run this is. In runtime.json and in every /api/state answer, so a launcher can tell its own
 # server from another Void's on the same port without the token ever going on a command line
-RUN_ID = secrets.token_hex(8)
+RUN_ID = os.environ.get("VOID_RUN_ID") or secrets.token_hex(8)   # (the window that restarts us picks it)
 TOOL_PATHS = {"/api/approve", "/api/capture", "/api/askpass"}
 
 VOICE_PROMPT = (

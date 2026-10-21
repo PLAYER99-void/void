@@ -31,6 +31,65 @@ for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF
     if _s is not None and hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
 
+DATA = winsys.data_dir()
+
+
+class Started:
+    """The one record of the server this app started (the launcher's, or the window's own restart of it): its pid
+    (the leader of its own process group, so its children share the group) and its run id. Quitting stops that server
+    and its children, and only if the server answering on its port still has that run id: one this app didn't
+    start is never touched."""
+
+    @staticmethod
+    def _file():
+        return DATA / "started.json"
+
+    @classmethod
+    def record(cls, pid, run_id):
+        cls._file().write_text(json.dumps({"pid": int(pid), "id": run_id}))
+
+    @classmethod
+    def stop(cls):
+        if sys.platform == "win32":
+            return
+        try:
+            rec = json.loads(cls._file().read_text())
+            pid, rid = int(rec["pid"]), rec["id"]
+            cls._file().unlink()
+            port = json.loads((DATA / "runtime.json").read_text())
+            if not rid or port.get("id") != rid:
+                return
+            import urllib.request
+            with urllib.request.urlopen(f"http://127.0.0.1:{int(port['port'])}/api/state", timeout=2) as r:
+                if json.load(r).get("id") != rid:
+                    return
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return
+        import signal
+        try:
+            group = os.getpgid(pid) == pid                                # (never the group of whoever launched it)
+        except OSError:
+            return
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pid, sig) if group else os.kill(pid, sig)
+            except OSError:
+                return
+            for _ in range(20 if sig == signal.SIGTERM else 5):
+                time.sleep(0.1)
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    return
+
+
+if __name__ == "__main__" and sys.argv[1:2] in (["--started"], ["--stop-started"]):   # the launcher's way in (no Qt)
+    if sys.argv[1] == "--started":
+        Started.record(sys.argv[2], sys.argv[3])
+    else:
+        Started.stop()
+    sys.exit(0)
+
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--autoplay-policy=no-user-gesture-required")
 from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, Qt, QTimer, QUrl, Signal, Slot  # noqa: E402
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QIcon, QPainter  # noqa: E402
@@ -50,7 +109,6 @@ MENU_STEADY = 3              # looks in a row that must agree before he moves (a
 MENU_NEAR = 3.0              # s the looks stay quick after the mouse was last up by the top edge; after that, one…
 MENU_SLOW = 2.0              # …every this many s (it can stay down with the mouse away: a menu opened from it)
 BALL = (170, 165)            # where the ball's centre sits inside the window
-DATA = winsys.data_dir()
 POS_FILE, PORT_FILE = DATA / "pos.json", DATA / "window.port"
 
 # the page talks to us through window.webkit.messageHandlers.voidui.postMessage (WebKit's API on Linux); on Windows
@@ -225,6 +283,7 @@ class VoidWindow(QWidget):
         threading.Thread(target=self._serve, daemon=True).start()
         self.base = url.split("?")[0]
         threading.Thread(target=self._watch_server, daemon=True).start()
+        QApplication.instance().aboutToQuit.connect(Started.stop)           # (macOS's own Quit too)
         self.ptt, self.ptt_held = None, False                           # the push-to-talk combo (the page sends it)
         threading.Thread(target=self._ptt_hook, daemon=True).start()
         QTimer.singleShot(1500, self._tell_page)
@@ -588,6 +647,7 @@ class VoidWindow(QWidget):
 
     def _remote_cmd(self, c):
         if c == "quit":
+            Started.stop()
             QApplication.quit()
         elif c == "toggle":
             if self.hover:
@@ -632,6 +692,17 @@ class VoidWindow(QWidget):
         except Exception:  # noqa: BLE001
             return False
 
+    def _start_server(self):
+        """Start the server in its own process group, with a run id of ours, and record it (see Started)."""
+        import secrets
+        import subprocess
+        rid = secrets.token_hex(8)
+        with open(DATA / "server.log", "ab") as out:
+            p = subprocess.Popen([sys.executable, str(APP / "server.py")], stdout=out, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, start_new_session=True,
+                                 env={**os.environ, "VOID_RUN_ID": rid})
+        Started.record(p.pid, rid)
+
     def _watch_server(self):
         """If the server stops (a crash), start it again instead of leaving him deaf with "failed to fetch". The page
         reconnects by itself: a new server means a new token, and it reloads when it sees "forbidden"."""
@@ -647,10 +718,7 @@ class VoidWindow(QWidget):
                 log("the server isn't answering — starting it again")
                 try:
                     if MAC:
-                        import subprocess
-                        with open(DATA / "server.log", "ab") as out:
-                            subprocess.Popen([sys.executable, str(APP / "server.py")], stdout=out, stderr=subprocess.STDOUT,
-                                             stdin=subprocess.DEVNULL, start_new_session=True)
+                        self._start_server()
                     else:
                         import launch_win
                         launch_win._start("server", [str(APP / "server.py")])

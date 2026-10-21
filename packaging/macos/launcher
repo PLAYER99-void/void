@@ -18,12 +18,16 @@ up(){ [ -f "$ROOT/runtime.json" ] || return 1
   ID="$(sed -n 's/.*"id": "\([0-9a-f]*\)".*/\1/p' "$ROOT/runtime.json")"; S="$(curl -fs --max-time 2 "${URL}api/state")" || return 1
   [ -z "$ID" ] || case "$S" in *"\"id\": \"$ID\""*) ;; *) return 1 ;; esac; }
 if ! up; then
+  set -m                                  # its own process group: quitting stops it with its children (resource tracker…)
   nohup "$PY" "$APP/server.py" >>"$LOG" 2>&1 </dev/null &
+  SPID=$!; set +m
   for _ in $(seq 60); do up && break; sleep 0.1; done
   up || { echo "server didn't start — see $LOG" >&2; exit 1; }
+  [ -z "$ID" ] || "$PY" "$APP/window_win.py" --started "$SPID" "$ID"   # ours: quit stops it (and only it)
 fi
 CMD="${1:-toggle}"
 if pgrep -f "$APP/window_win.py" >/dev/null 2>&1; then exec "$PY" "$APP/window_win.py" "${URL}?native=1" "$CMD"; fi
-[ "$CMD" = hide ] || [ "$CMD" = quit ] && exit 0
+[ "$CMD" = quit ] && { "$PY" "$APP/window_win.py" --stop-started; exit 0; }   # no window: the server is all there is to stop
+[ "$CMD" = hide ] && exit 0
 [ "$CMD" = toggle ] && CMD=show
 exec "$PY" "$APP/window_win.py" "${URL}?native=1" "$CMD" >>"$LOG" 2>&1 </dev/null
