@@ -1,5 +1,5 @@
 """Quitting Void.app stops the server the app started (and that server's children), and never one it didn't start,
-told apart by the run id in runtime.json and /api/state.
+told apart by the run id in runtime.json and /api/id.
 
     python3 -m unittest discover -s tests
 """
@@ -33,7 +33,7 @@ data = os.path.join(os.environ["XDG_DATA_HOME"], "void")
 rid = os.environ.get("VOID_RUN_ID") or secrets.token_hex(8)
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps({"version": "0", "id": rid}).encode()
+        body = json.dumps({"id": rid} if self.path == "/api/id" else {"version": "0"}).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
         self.wfile.write(body)
     def log_message(self, *a): pass

@@ -61,7 +61,7 @@ class Started:
                 cls._forget()
                 return
             import urllib.request
-            with urllib.request.urlopen(f"http://127.0.0.1:{int(port['port'])}/api/state", timeout=2) as r:
+            with urllib.request.urlopen(f"http://127.0.0.1:{int(port['port'])}/api/id", timeout=2) as r:
                 if json.load(r).get("id") != rid:
                     cls._forget()
                     return

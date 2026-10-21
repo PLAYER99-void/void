@@ -22,7 +22,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "app"))
 import launch_win  # noqa: E402
 
-# a stand-in for app/server.py: the same port rule, runtime.json and /api/state answers, nothing else. Like the real
+# a stand-in for app/server.py: the same port rule, runtime.json and /api/state and /api/id answers, nothing else. Like the real
 # one with the mic waiting on Core Audio, the full state (with the window's token) doesn't answer for a long while.
 FAKE_SERVER = r'''
 import json, os, secrets, signal, sys, time
@@ -39,7 +39,9 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.headers.get("X-Void-Token") == tok:
             time.sleep(20)
-        body = json.dumps({"version": "0", **old}).encode()
+        if self.path == "/api/id" and not old:     # (a server from before run ids has no /api/id)
+            self.send_response(404); self.end_headers(); return
+        body = json.dumps(old if self.path == "/api/id" else {"version": "0"}).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
         self.wfile.write(body)
     def log_message(self, *a): pass

@@ -48,8 +48,9 @@ def up():
     update: that one's ours."""
     try:
         rid = json.loads((DATA / "runtime.json").read_text()).get("id")
-        got = json.load(urllib.request.urlopen(URL + "api/state", timeout=1)).get("id")
-        return rid is None or got == rid
+        if rid is None:                            # (an older server has no /api/id: any answer will do)
+            return bool(urllib.request.urlopen(URL + "api/state", timeout=1))
+        return json.load(urllib.request.urlopen(URL + "api/id", timeout=1)).get("id") == rid
     except Exception:  # noqa: BLE001
         return False
 

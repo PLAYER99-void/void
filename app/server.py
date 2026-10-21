@@ -64,7 +64,7 @@ STATE_PATH = DATA_DIR / "state.json"
 # password helper) and only works for those: asking you to approve, looking at the screen, and the sudo card in root mode.
 TOKEN = secrets.token_urlsafe(24)
 TOOL_TOKEN = secrets.token_urlsafe(24)
-# not a password: which run this is. In runtime.json and in every /api/state answer, so a launcher can tell its own
+# not a password: which run this is. In runtime.json and the /api/id answer, so a launcher can tell its own
 # server from another Void's on the same port without the token ever going on a command line
 RUN_ID = os.environ.get("VOID_RUN_ID") or secrets.token_hex(8)   # (the window that restarts us picks it)
 TOOL_PATHS = {"/api/approve", "/api/capture", "/api/askpass"}
@@ -2881,7 +2881,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/state":                      # without the window's token: just "it's running" and the version
             if secrets.compare_digest(self.headers.get("X-Void-Token") or "", TOKEN):
                 return self._json(state_info())
-            return self._json({"version": VERSION, "id": RUN_ID})
+            return self._json({"version": VERSION})
+        if p == "/api/id":                         # which run this is (not a secret; never waits on the mic, unlike the state)
+            return self._json({"id": RUN_ID})
         if p == "/":
             p = "/index.html"
         f = (STATIC / p.lstrip("/")).resolve()
