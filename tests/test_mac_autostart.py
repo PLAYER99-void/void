@@ -93,5 +93,60 @@ class MacAutostart(unittest.TestCase):
             self.assertFalse(agent.exists())
 
 
+class StableLaunchAgent(unittest.TestCase):
+    """Runs anywhere: macsys is faked, so Void.app running from a DMG or a translocated copy can be pretended."""
+    def sync(self, tmp, launcher, on=True, which="/opt/homebrew/bin/void"):
+        agent = Path(tmp) / "Library" / "LaunchAgents" / "void.plist"
+        fake = mock.Mock(bundle_launcher=mock.Mock(return_value=launcher))
+        with mock.patch.object(server, "LAUNCH_AGENT", agent), mock.patch.object(server, "macsys", fake, create=True), \
+                mock.patch.object(server, "MAC", True), mock.patch.object(server, "WIN", False), \
+                mock.patch.dict(server.CFG, {"autostart": on}), \
+                mock.patch.object(server.shutil, "which", return_value=which):
+            server.sync_autostart()
+        return agent
+
+    def test_stable_path_is_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            agent = self.sync(d, "/Applications/Void.app/Contents/MacOS/Void")
+            self.assertEqual(plistlib.loads(agent.read_bytes())["ProgramArguments"],
+                             ["/Applications/Void.app/Contents/MacOS/Void", "show"])
+
+    def test_dmg_mount_is_never_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(self.sync(d, "/Volumes/Void/Void.app/Contents/MacOS/Void").exists())
+
+    def test_translocated_path_is_never_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = "/private/var/folders/ab/xyz/T/AppTranslocation/1234-ABCD/d/Void.app/Contents/MacOS/Void"
+            self.assertFalse(self.sync(d, t).exists())
+
+    def test_unstable_path_leaves_existing_plist(self):
+        with tempfile.TemporaryDirectory() as d:
+            agent = self.sync(d, "/Applications/Void.app/Contents/MacOS/Void")
+            before = agent.read_bytes()
+            self.sync(d, "/Volumes/Void/Void.app/Contents/MacOS/Void")
+            self.assertEqual(agent.read_bytes(), before)
+
+    def test_resync_on_start_rewrites_existing_plist(self):
+        with tempfile.TemporaryDirectory() as d:
+            agent = self.sync(d, "/Applications/Void.app/Contents/MacOS/Void")
+            agent.write_bytes(plistlib.dumps({"Label": "void", "ProgramArguments": ["/gone/Void", "show"]}))
+            fake = mock.Mock(bundle_launcher=mock.Mock(return_value="/Applications/Void.app/Contents/MacOS/Void"))
+            with mock.patch.object(server, "LAUNCH_AGENT", agent), mock.patch.object(server, "macsys", fake, create=True), \
+                    mock.patch.object(server, "MAC", True), mock.patch.object(server, "WIN", False), \
+                    mock.patch.dict(server.CFG, {"autostart": True}):
+                server.resync_launch_agent()
+            self.assertEqual(plistlib.loads(agent.read_bytes())["ProgramArguments"][0],
+                             "/Applications/Void.app/Contents/MacOS/Void")
+
+    def test_resync_without_plist_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            agent = Path(d) / "void.plist"
+            with mock.patch.object(server, "LAUNCH_AGENT", agent), mock.patch.object(server, "MAC", True), \
+                    mock.patch.dict(server.CFG, {"autostart": True}):
+                server.resync_launch_agent()
+            self.assertFalse(agent.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

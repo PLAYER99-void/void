@@ -358,6 +358,20 @@ HYPR_MARK = "# added by Void (Settings → More → Start when I log in)"
 LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / "void.plist"
 
 
+def launcher_is_transient(path):
+    """True for a path that won't exist at the next login: inside a mounted disk image (/Volumes/...), or in the
+    throwaway copy Gatekeeper runs a quarantined app from (App Translocation)."""
+    p = str(path)
+    return p.startswith("/Volumes/") or "/AppTranslocation/" in p
+
+
+def resync_launch_agent():
+    """On startup: an existing LaunchAgent is rewritten to point at the Void that is running now (the app may have
+    been moved, updated or reinstalled since it was written)."""
+    if MAC and CFG.get("autostart") and LAUNCH_AGENT.exists():
+        sync_autostart()
+
+
 def sync_autostart():
     """Add/remove Void from login startup to match the `autostart` setting."""
     on = bool(CFG.get("autostart"))
@@ -373,7 +387,10 @@ def sync_autostart():
     if MAC:                                   # a LaunchAgent that runs `void show` when you log in
         launcher = macsys.bundle_launcher(APP_DIR) or shutil.which("void") or str(Path.home() / ".local/bin/void")
         try:
-            if on:
+            if on and launcher_is_transient(launcher):      # running from the DMG or translocated: that path will vanish
+                print(f"[void] launch agent: not pointing it at {launcher} (move Void to Applications first)",
+                      file=sys.stderr)
+            elif on:
                 import plistlib
                 LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
                 LAUNCH_AGENT.write_bytes(plistlib.dumps({"Label": "void", "ProgramArguments": [launcher, "show"],
@@ -3393,6 +3410,7 @@ def main():
     if CFG["stt_prewarm"] or CFG.get("wake_word"):
         threading.Thread(target=lambda: _try(whisper), daemon=True).start()
     _wire_quick()
+    resync_launch_agent()
     threading.Thread(target=warm_tts, daemon=True).start()
     Wake.ensure()
     Updates.start()
