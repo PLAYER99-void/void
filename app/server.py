@@ -3402,7 +3402,7 @@ def main():
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         fd = os.open(rt, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"port": CFG["port"], "token": TOKEN, "tool_token": TOOL_TOKEN, "id": RUN_ID}, f)
+            json.dump({"port": CFG["port"], "token": TOKEN, "tool_token": TOOL_TOKEN, "id": RUN_ID, "pid": os.getpid()}, f)
     except OSError:
         pass
     srv.daemon_threads = True

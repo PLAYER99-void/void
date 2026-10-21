@@ -42,7 +42,7 @@ os.makedirs(data, exist_ok=True)
 kid = subprocess.Popen(["sleep", "40"])
 open(os.path.join(data, "server.pid"), "w").write(str(os.getpid()))
 open(os.path.join(data, "child.pid"), "w").write(str(kid.pid))
-json.dump({"port": PORT, "token": "t", "tool_token": "t", "id": rid}, open(os.path.join(data, "runtime.json"), "w"))
+json.dump({"port": PORT, "token": "t", "tool_token": "t", "id": rid, "pid": os.getpid()}, open(os.path.join(data, "runtime.json"), "w"))
 srv.serve_forever()
 '''
 # the window of the fake app: the real window_win.py's command-line bits are run for "--" arguments, anything else is
@@ -219,6 +219,17 @@ class WindowKeepsTheRecord(Base):
         window_win.Started.stop()
         time.sleep(1)
         self.assertTrue(alive(server) and alive(child))
+
+    def test_stop_leaves_a_foreign_process_when_the_recorded_pid_is_not_the_servers(self):
+        server, child = self.start("eeee")                 # the winner of a launch race
+        # the loser died at bind, so the launcher recorded its $! with the winner's run id; its pid has since been
+        # reused by someone else's process group
+        foreign = subprocess.Popen(["sleep", "40"], start_new_session=True)
+        self.pids.append(foreign.pid)
+        window_win.Started.record(foreign.pid, "eeee")
+        window_win.Started.stop()
+        time.sleep(1)
+        self.assertTrue(alive(foreign.pid) and alive(server) and alive(child))
 
     def test_stop_without_a_record_stops_nothing(self):
         server, child = self.start("cccc")

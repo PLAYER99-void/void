@@ -57,7 +57,7 @@ class Started:
             pid, rid = int(rec["pid"]), rec["id"]
             cls._file().unlink()
             port = json.loads((DATA / "runtime.json").read_text())
-            if not rid or port.get("id") != rid:
+            if not rid or port.get("id") != rid or port.get("pid") != pid:   # (not a racer's dead or reused pid)
                 return
             import urllib.request
             with urllib.request.urlopen(f"http://127.0.0.1:{int(port['port'])}/api/state", timeout=2) as r:
