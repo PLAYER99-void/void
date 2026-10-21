@@ -873,6 +873,20 @@ class VoidWindow(QWidget):
         step()
 
 
+def name_qt_app(app):
+    """Qt names itself after the script (window_win.py) and, on macOS, writes its own cache (the Qt Quick pipeline cache)
+    to ~/Library/Caches/<that name> whatever HOME says. Call him Void and send that cache to a folder of his own under
+    cache_dir(). The page keeps QtWebEngine's default off-the-record profile (nothing of it is stored)."""
+    app.setApplicationName("Void")
+    folder = winsys.cache_dir() / "Void"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    for var in ("QSG_RHI_PIPELINE_CACHE_SAVE", "QSG_RHI_PIPELINE_CACHE_LOAD"):
+        os.environ.setdefault(var, str(folder / "qtpipelinecache"))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -883,6 +897,7 @@ def main():
     if len(sys.argv) > 3 and sys.argv[2] == "--selftest":
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] += " --disable-gpu"
         app = QApplication(sys.argv[:1])
+        name_qt_app(app)
         win = VoidWindow(url)
         out = sys.argv[3]
 
@@ -895,6 +910,7 @@ def main():
     if len(sys.argv) > 4 and sys.argv[2] == "--selftest-bar":            # dock on an edge, report where, save a picture
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] += " --disable-gpu"
         app = QApplication(sys.argv[:1])
+        name_qt_app(app)
         win = VoidWindow(url)
         edge, out = sys.argv[3], sys.argv[4]
 
@@ -914,6 +930,7 @@ def main():
         return
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv[:1])
+    name_qt_app(app)
     app.setQuitOnLastWindowClosed(False)
     if MAC:
         winsys.no_dock_icon()
