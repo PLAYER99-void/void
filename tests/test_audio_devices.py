@@ -397,6 +397,16 @@ class StuckOpen(Base):
         self.assertFalse(t.is_alive(), "blocked behind the stuck open")
         return out[0]
 
+    def test_stop_does_not_wait_for_the_stuck_open(self):
+        self.answer(winsys.stop)                           # (returns while the open still holds the lock)
+        self.assertTrue(winsys._PA.done)                   # (and nothing opens again)
+
+    def test_sigterm_runs_every_atexit_callback(self):
+        """SIGTERM → SystemExit → atexit: winsys.stop must not hold the callbacks behind the stuck open."""
+        r = subprocess.run([sys.executable, "-c", STUCK_QUIT, str(HERE), str(HERE.parent / "app")],
+                           capture_output=True, text=True, timeout=20)
+        self.assertEqual(r.stdout.split(), ["last"], r.stderr)
+
     def test_can_play_answers(self):
         self.assertTrue(self.answer(winsys.can_play))
 
@@ -446,3 +456,28 @@ class StuckOpen(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+STUCK_QUIT = """
+import atexit, os, signal, sys, threading, time
+sys.path[:0] = sys.argv[1:3]
+from test_audio_devices import FakeSD
+import winsys
+sd = sys.modules["sounddevice"] = FakeSD()
+winsys.LOCK_WAIT = 0.05
+atexit.register(lambda: print("last", flush=True))     # (registered first, runs last)
+winsys._PA.hooked = True
+atexit.register(winsys.stop)
+def bye(*_):
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, bye)
+inside = threading.Event()
+def make():
+    inside.set()
+    time.sleep(60)
+owner = type("O", (), {"first": threading.Event(), "stream": None})()
+threading.Thread(target=lambda: winsys._open(sd, owner, make), daemon=True).start()
+inside.wait(5)
+os.kill(os.getpid(), signal.SIGTERM)
+time.sleep(30)
+"""

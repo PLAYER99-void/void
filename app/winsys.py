@@ -98,8 +98,10 @@ def stop():
     clean-up — otherwise the wake word sees its mic die under that, opens a new one on a PortAudio started over, and its
     callback then comes in while Python is tearing itself down: it can't get Python back, and macOS reports a crash."""
     import sys
-    with _PA.lock:
-        _PA.done = True
+    _PA.done = True                                        # (set first, lock or not: nothing opens after this)
+    with _PA.brief() as got:
+        if not got:                                        # a stream's open is stuck on the microphone permission
+            return                                         # prompt: quitting can't wait for it (the process exits anyway)
         for s in list(_PA.live):
             s.kill()
         sd = sys.modules.get("sounddevice")
