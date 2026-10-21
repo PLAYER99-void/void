@@ -354,6 +354,7 @@ class VoidWindow(QWidget):
         # (a new id); a moment later, once the NSWindow is up
         if MAC and ev.type() in (QEvent.Show, QEvent.WinIdChange):
             QTimer.singleShot(0, self._mac_native)
+            self.through = None                                          # a new or reshown NSWindow takes clicks again: say it anew
         return super().event(ev)
 
     def resizeEvent(self, ev):

@@ -593,6 +593,20 @@ class Room(unittest.TestCase):
         self.assertEqual(w.x(), x)
         self.assertEqual(json.loads(window_win.POS_FILE.read_text()), {"x": 300, "y": 100})
 
+    def test_a_reshown_or_rebuilt_window_is_told_click_through_again(self):
+        calls = []
+        window_win.winsys.set_click_through = staticmethod(lambda w, on: calls.append(on))
+        w = self.make(300)
+        w.rects = []                                                     # nothing solid: all of it lets clicks through
+        self.mouse = (w.x() + 200, w.y() + 200)
+        w._poll_mouse()
+        w._poll_mouse()
+        self.assertEqual(calls, [True])                                  # (said once, then remembered)
+        for kind in (window_win.QEvent.WinIdChange, window_win.QEvent.Show):
+            w.event(window_win.QEvent(kind))                             # macOS may hand back a window that takes clicks
+            w._poll_mouse()
+        self.assertEqual(calls, [True, True, True])
+
 
 if __name__ == "__main__":
     unittest.main()
