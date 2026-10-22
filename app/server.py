@@ -1297,6 +1297,11 @@ class Wake:
     follow_on = False                        # what the page was last told (it shows him listening while it's open)
     cut = None                               # you clicked him ("finish") or pressed Space/Esc ("cancel") while he heard you
     asleep = False                           # he's hidden: the mic stays closed until he's shown again
+    poke = threading.Event()                 # set whenever should_run()/wanted() may have changed (loop waits on it)
+
+    @classmethod
+    def nudge(cls):
+        cls.poke.set()
 
     @classmethod
     def wanted(cls):
@@ -1311,6 +1316,7 @@ class Wake:
         """He's talking until `end`; the follow-up window opens then."""
         cls.speaking_until = cls.follow_from = end
         cls.follow_until = end + float(CFG.get("follow_up") or 0)
+        cls.nudge()
 
     @classmethod
     def end_follow(cls, how):
@@ -1318,11 +1324,13 @@ class Wake:
         cls.cut = how
         if how != "finish":
             cls.follow_until = 0.0
+        cls.nudge()
 
     @classmethod
     def hush(cls):
         """He was cut off: no follow-up window."""
         cls.speaking_until = cls.follow_until = 0.0
+        cls.nudge()
 
     @classmethod
     def ensure(cls):
@@ -1342,8 +1350,12 @@ class Wake:
     def loop(cls):
         last = None
         while cls.wanted():
+            cls.poke.clear()                     # (before checking, so a change right after isn't missed)
             if not cls.should_run():
-                time.sleep(0.2)
+                # nothing to do until poked, or until he stops talking / the follow-up window opens or closes
+                now = time.monotonic()
+                due = [t - now for t in (cls.speaking_until, cls.follow_from, cls.follow_until) if t > now]
+                cls.poke.wait(min(due) + 0.01 if due else 60)
                 continue
             try:
                 cls.session()
@@ -2231,6 +2243,7 @@ def save_config(**kw):
         cur = {}
     cur.update(kw)
     CFG.update(kw)
+    Wake.nudge()
     CONF_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONF_PATH.write_text(json.dumps(cur, indent=2) + "\n")
 
@@ -2955,6 +2968,7 @@ class Handler(BaseHTTPRequestHandler):
                     Wake.hush()
                     if Listen.current:
                         Listen.current.stop(cancel=True)
+                Wake.nudge()
                 return self._json({"ok": True, "asleep": Wake.asleep})
             if p == "/api/follow":
                 Wake.end_follow("finish" if json.loads(self._body() or b"{}").get("act") == "finish" else "cancel")
@@ -3206,6 +3220,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             Listen.current = None
             Listen.lock.release()
+            Wake.nudge()                         # (the wake word can have the mic back)
         return None
 
     def events(self):
