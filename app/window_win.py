@@ -120,6 +120,12 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngine
 from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: E402
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget  # noqa: E402
 
+
+def _cocoa():
+    """Cocoa calls on winId() are only safe on Qt's cocoa platform: on offscreen/minimal/vnc it's a counter, not an
+    NSView pointer, and objc_msgSend on it segfaults."""
+    return MAC and QGuiApplication.platformName() == "cocoa"
+
 W, H = 340, 460
 WIDE = 470                   # while settings / history / memory are open the window widens to this
 CODE_SIDE = 100              # room either side for his terminal
@@ -343,6 +349,8 @@ class VoidWindow(QWidget):
     def _mac_native(self):
         """The Cocoa side of his window: on every Space, not resizable by you or by macOS, and not pushed down off the
         top edge by macOS (docked up there, the notch hangs exactly as far in as the page says)."""
+        if not _cocoa():
+            return
         if not self.internalWinId():                                     # (gone: don't make a new one just for this)
             return
         winsys.keep_on_all_spaces(self.winId())
@@ -632,7 +640,8 @@ class VoidWindow(QWidget):
             return
         self.through = on
         if MAC:
-            winsys.set_click_through(self.winId(), on)
+            if _cocoa():
+                winsys.set_click_through(self.winId(), on)
             return
         hwnd = int(self.winId())
         u = ctypes.windll.user32
@@ -657,14 +666,23 @@ class VoidWindow(QWidget):
     # ---- show / hide / commands
     def show_me(self):
         self.shown = True
+        if self.hover and not self.isVisible():
+            self.vel, self.last = [0.0, 0.0], None                       # (no stale speed from before he was hidden)
+            self._follow()                                             # (on the pointer before he appears: no jump)
         self.show()
         self.raise_()
+        if not self.poll.isActive():                                     # (stopped while hidden: hide_me)
+            self.poll.start()
+        self._poll_mouse()                                               # up to date at once, not a tick later
         self._js("window.voidShown&&voidShown()")
 
     def hide_me(self):
         self.shown = False
         self._js("window.voidHidden&&voidHidden()")
         self.hide()
+        self.poll.stop()                                                 # no wakeups while he's away (show_me restarts it)
+        if not self.hover:
+            self._set_through(False)                                     # (what the poll did while he was hidden)
 
     def _remote_cmd(self, c):
         if c == "quit":

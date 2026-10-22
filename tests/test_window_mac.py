@@ -101,6 +101,8 @@ class Unresize(unittest.TestCase):
                                   "no_resize": self.cocoa.no_resize_, "unconstrained": self.cocoa.unconstrained})
         self.saved = window_win.winsys
         window_win.winsys = fake
+        self.saved_cocoa = window_win._cocoa
+        window_win._cocoa = lambda: True
         js = self.js = []
 
         class Win(window_win.VoidWindow):
@@ -125,6 +127,7 @@ class Unresize(unittest.TestCase):
         self.win.deleteLater()
         self.settle()
         window_win.winsys = self.saved
+        window_win._cocoa = self.saved_cocoa
 
     def settle(self):
         for _ in range(5):
@@ -317,6 +320,8 @@ class BarInset(unittest.TestCase):
                                   "watch_screens": staticmethod(lambda cb: test.watching.append(cb) or True)})
         self.saved = window_win.winsys, window_win.QCursor
         window_win.winsys = fake
+        self.saved_cocoa = window_win._cocoa
+        window_win._cocoa = lambda: True
         self.mouse = (0, 900)
         window_win.QCursor = type("Cursor", (), {"pos": staticmethod(lambda: QPoint(*test.mouse))})
         js = self.js = []
@@ -345,6 +350,7 @@ class BarInset(unittest.TestCase):
         self.win.deleteLater()
         self.settle()
         window_win.winsys, window_win.QCursor = self.saved
+        window_win._cocoa = self.saved_cocoa
 
     def settle(self, s=0.0):
         import time
@@ -504,6 +510,8 @@ class Room(unittest.TestCase):
                                   "set_click_through": staticmethod(lambda w, on: None)})
         self.saved = window_win.winsys, window_win.QCursor
         window_win.winsys = fake
+        self.saved_cocoa = window_win._cocoa
+        window_win._cocoa = lambda: True
         self.mouse = (0, 0)
         window_win.QCursor = type("Cursor", (), {"pos": staticmethod(lambda: QPoint(*test.mouse))})
         js, moves = self.js, self.moves = [], []
@@ -536,6 +544,7 @@ class Room(unittest.TestCase):
             self.win.deleteLater()
         self.settle()
         window_win.winsys, window_win.QCursor = self.saved
+        window_win._cocoa = self.saved_cocoa
 
     def settle(self, s=0.0):
         import time
