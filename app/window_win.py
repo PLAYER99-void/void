@@ -656,14 +656,23 @@ class VoidWindow(QWidget):
     # ---- show / hide / commands
     def show_me(self):
         self.shown = True
+        if self.hover and not self.isVisible():
+            self.vel, self.last = [0.0, 0.0], None                       # (no stale speed from before he was hidden)
+            self._follow()                                             # (on the pointer before he appears: no jump)
         self.show()
         self.raise_()
+        if not self.poll.isActive():                                     # (stopped while hidden: hide_me)
+            self.poll.start()
+        self._poll_mouse()                                               # up to date at once, not a tick later
         self._js("window.voidShown&&voidShown()")
 
     def hide_me(self):
         self.shown = False
         self._js("window.voidHidden&&voidHidden()")
         self.hide()
+        self.poll.stop()                                                 # no wakeups while he's away (show_me restarts it)
+        if not self.hover:
+            self._set_through(False)                                     # (what the poll did while he was hidden)
 
     def _remote_cmd(self, c):
         if c == "quit":
