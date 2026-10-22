@@ -318,8 +318,12 @@ def projects():
     return dict(cfg.get("projects") or {})
 
 
+def _project_name(name):
+    return " ".join(re.sub(r"\b(my|the|project|folder|repo|directory)\b", " ", name.lower()).split())
+
+
 def add_project(name, path):
-    name = " ".join(re.sub(r"\b(my|the|project|folder|repo)\b", " ", name.lower()).split())
+    name = _project_name(name)
     p = os.path.abspath(os.path.expanduser(path.strip().rstrip(".,!")))
     if not name or not os.path.isdir(p):
         return None
@@ -330,7 +334,7 @@ def add_project(name, path):
 
 
 def _find_project(name):
-    name = " ".join(re.sub(r"\b(my|the|project|folder|repo|directory)\b", " ", name.lower()).split())
+    name = _project_name(name)
     if not name:
         return None
     pr = projects()
