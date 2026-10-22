@@ -202,7 +202,7 @@ body.gooing #menu:not(.on) .mb{transform:translate(0,0) scale(.1);transition:tra
 
 
 /* panels (settings, history, memory, actions) */
-.pn{position:fixed;left:12px;right:12px;top:34px;max-height:calc(100vh - 46px);display:flex;flex-direction:column;border-radius:18px;
+.pn{position:fixed;left:calc(12px + var(--bx,0px));right:12px;top:34px;max-height:calc(100vh - 46px);display:flex;flex-direction:column;border-radius:18px;
   background:var(--panel);border:1px solid var(--edge);box-shadow:0 0 9px var(--accA);   /* small: a big dark shadow got cut by the window edge and left dim pixels */font-size:12.5px;z-index:6;
   opacity:0;transform:translateY(-10px) scale(.96);pointer-events:none;transition:opacity .4s var(--ease),transform .6s var(--ease)}
 .pn.on{opacity:1;transform:none;pointer-events:auto}
@@ -281,6 +281,8 @@ select:focus,.pn input[type=text]:focus,.pn textarea:focus{border-color:var(--ed
   opacity:0;transform:translateY(12px) scale(.95);pointer-events:none;transition:opacity .4s var(--ease),transform .6s var(--ease)}
 #appr.on{opacity:1;transform:none;pointer-events:auto}
 #appr .q{font-size:12.5px;color:#ffd38a;margin-bottom:6px;display:flex;gap:6px;align-items:center}
+#appr .who{font-size:11px;color:#b5b5b5;margin:-2px 0 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#appr .who b{color:var(--hot);font-weight:600} #appr .who[hidden]{display:none}
 #appr pre{margin:0 0 9px;padding:7px 9px;border-radius:9px;background:#151515;border:1px solid #262626;font:11.5px/1.4 var(--mono);color:#eee;
   max-height:64px;overflow:auto;white-space:pre-wrap;word-break:break-all;user-select:text;-webkit-user-select:text}
 #appr .bar{justify-content:flex-end}
@@ -300,7 +302,7 @@ select:focus,.pn input[type=text]:focus,.pn textarea:focus{border-color:var(--ed
 @keyframes pwShake{25%{transform:translateX(-6px)}50%{transform:translateX(6px)}75%{transform:translateX(-3px)}}
 body.pw #cap,body.pw #appr{opacity:0}
 
-#flash{position:fixed;inset:0;pointer-events:none;opacity:0;background:radial-gradient(45% 35% at 50% 36%,var(--flash,#ff2a2a) 0%,transparent 70%)}
+#flash{position:fixed;inset:0 0 0 var(--bx,0px);pointer-events:none;opacity:0;background:radial-gradient(45% 35% at 50% 36%,var(--flash,#ff2a2a) 0%,transparent 70%)}
 #flash.go{animation:flash .9s var(--ease)}
 #paint{position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:40}
 #menu{z-index:20} .pn{z-index:21} #appr{z-index:22} #ask{z-index:19} #atts{z-index:18} #cap{z-index:5} #chip{z-index:30}
@@ -425,11 +427,43 @@ body.faceyou #code .rootb{transform:none;left:auto;right:-9px}
 body.hover #code{display:none}
 body.term #chip.work{opacity:0}          /* the terminal already says what he's doing */
 
+/* his helpers (subagents): little Voids that bud out of him and orbit; in the notch, beads on its lip */
+#miniGoo{fill:var(--body1,#0a0a0a)}
+.mini{pointer-events:auto}
+.mini .mn-h{fill:var(--acc,#3d9b74);opacity:.2} .mini.fail .mn-h{fill:#ff2a2a;opacity:.16}
+.mini .mn-b{fill:url(#miniG);stroke:var(--rim,#262626);stroke-width:.8}
+.mini .mn-goo{fill:var(--body1,#0a0a0a)}   /* (the liquid while it divides in two, or its halves drink back together) */
+.mini .mn-w{fill:var(--whiteL,#f3dccf)} .mini .mn-p{fill:var(--pupL,#3d9b74)}
+.mini.fail .mn-p{opacity:0}   /* failed: flat, blank eyes and a red X (see miniBadge) */
+/* how a helper ended, as a little badge on its shoulder (a bead's too): a green check when done, a red X when it failed */
+.mn-badge{pointer-events:none} .mn-badge .bd-c{stroke:var(--panel,#0b0b0b);stroke-width:1.4}
+.mn-badge.ok .bd-c{fill:var(--acc,#3d9b74)} .mn-badge.no .bd-c{fill:#ff2a2a}
+.mn-badge .bd-g{fill:none;stroke:var(--text,#f3f3f3);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+body.bar #miniGoo,body.bar #miniBack,body.bar #miniFront,body.hover #miniGoo,body.hover #miniBack,body.hover #miniFront{display:none}
+#miniSh{pointer-events:none} body.bar #miniSh,body.hover #miniSh,body.goohide #miniSh{display:none}   /* (wherever his own #shadow goes) */
+#beads{position:absolute;left:0;top:0;width:340px;height:460px;overflow:visible;pointer-events:none;z-index:1;display:none}
+body.bar #beads{display:block}
+#beads .mn-bead{pointer-events:auto}
+#miniTip{position:absolute;left:0;top:0;z-index:31;pointer-events:none;padding:4px 9px;border-radius:9px;background:#0c0c0cf2;
+  border:1px solid #2a2a2a;font-size:11px;line-height:1.35;color:#ddd;max-width:220px;
+  opacity:0;transition:opacity .15s linear}
+#miniTip.on{opacity:1} #miniTip b{color:var(--hot);font-weight:600;margin-right:4px} #miniTip i{font-style:normal;color:#999}
+body.hover #miniTip{display:none}
+
 </style>
 </head>
 <body class="m-idle">
 <div id="flash"></div><div id="paint"></div>
 <div id="barPill"></div>
+<!-- his helpers in the notch: beads on its lip (a finer goo, for their size, only while one oozes out or melts in) -->
+<svg id="beads" viewBox="0 0 340 460">
+  <defs><filter id="gooS" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="3.4" result="b"/>
+    <feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8"/>
+  </filter></defs>
+  <g id="beadGoo"></g><g id="beadFace"></g>
+</svg>
+<div id="miniTip"></div>
 <!-- the liquid for the blob ↔ notch morph: shapes blurred together and sharpened again ("goo") so they flow into one
      another -->
 <svg id="goo" viewBox="0 0 340 460">
@@ -453,17 +487,26 @@ body.term #chip.work{opacity:0}          /* the terminal already says what he's 
       <radialGradient id="glossG"><stop offset="0" stop-color="#fff" stop-opacity=".17"/><stop offset=".6" stop-color="#fff" stop-opacity=".05"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
       <clipPath id="clipL"><path id="cpL"/></clipPath>
       <clipPath id="clipR"><path id="cpR"/></clipPath>
+      <!-- the notch morph's goo (#gooF) at a helper's size: that one's blur would melt a little Void away (and its svg
+           is display:none except mid-morph, where a filter doesn't render) -->
+      <filter id="gooM" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="4.5" result="b"/>
+        <feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8"/>
+      </filter>
+      <radialGradient id="miniG" cx="-5" cy="-6" r="22" gradientUnits="userSpaceOnUse"><stop offset="0" class="b0"/><stop offset=".55" class="b1"/><stop offset="1" class="b2"/></radialGradient>
     </defs>
     <g id="cam">
       <g id="haloW"><circle id="halo" r="150" fill="url(#halo)"/></g>
       <g id="raysW"><path id="rays" fill="url(#rayG)" opacity="0"/></g>
       <g id="fxBack"></g>
       <ellipse id="shadow" cx="0" cy="108" rx="62" ry="9" fill="url(#shG)"/>
+      <g id="miniSh"></g>
       <g id="orbBack" class="orb" filter="url(#glow)"></g>
       <path id="vring" opacity="0" filter="url(#glow)"/>
       <g id="workW" opacity="0" filter="url(#glow)"><circle id="workTail" r="96"/><circle id="workHead" r="96"/></g>
       <g id="zz" opacity="0"><text class="zz" x="66" y="-66">z</text><text class="zz" x="82" y="-88" font-size="20">z</text></g>
       <g id="qmark" opacity="0"><text class="qm" x="70" y="-70">?</text></g>
+      <g id="miniGoo"></g><g id="miniBack"></g>
       <g id="body">
         <g id="accBack"></g>
         <circle r="76" fill="url(#ballG)"/>
@@ -483,6 +526,7 @@ body.term #chip.work{opacity:0}          /* the terminal already says what he's 
         <path id="sweat" opacity="0" fill="#cfe8ff" d="M0-8C4-2 6 2 6 5A6 6 0 0 1-6 5C-6 2-4-2 0-8Z"/>
       </g>
       <g id="orbFront" class="orb" filter="url(#glow)"></g>
+      <g id="miniFront"></g>
       <g id="fx"></g>
     </g>
   </svg>
@@ -583,7 +627,7 @@ body.term #chip.work{opacity:0}          /* the terminal already says what he's 
 <!-- history / memory / quick actions share one panel -->
 <div class="pn" id="panel"><div class="hd"><b id="pTitle"></b><span id="pTools"></span><button class="x" data-close title="Close (Esc)">✕</button></div><div class="bd" id="pBody"></div></div>
 
-<div id="appr"><div class="q">✋ <span id="apQ">Can I run this?</span></div><pre id="apCmd"></pre>
+<div id="appr"><div class="who" id="apWho" hidden></div><div class="q">✋ <span id="apQ">Can I run this?</span></div><pre id="apCmd"></pre>
   <div class="bar"><span class="hint">say “yes” or “no”</span><button class="btn sm" data-ans="always" title="don't ask again for this exact command in this chat">always</button><button class="btn sm" data-ans="no">no</button><button class="btn sm yes" data-ans="yes">yes</button></div></div>
 
 <form id="pwbox" autocomplete="off"><div class="q">🔑 <span id="pwQ">He needs root for this</span></div>
@@ -624,12 +668,14 @@ function staleToken(){                       // the server restarted with a new 
   try{ sessionStorage.setItem('void-reload',Date.now()); sessionStorage.removeItem('void-t'); }catch(e){}
   if(!native('reauth')) tick('Void restarted — close this window and run “void” again',true);
 }
-const native=msg=>{ try{ window.webkit.messageHandlers.voidui.postMessage(msg); return true; }catch(e){ return false; } };
+const native=msg=>{ try{ window.webkit.messageHandlers.voidui.postMessage(msg); if(msg==='show'){ faceGo(); timersGo(true); } return true; }catch(e){ return false; } };
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 let workAmt=0, workRot=0, workWhat='', workT0=0;
 let busy=false, toolMood=null, muted=false, info={}, lastActive=performance.now(), hiddenNow=false;
+let faceRaf=0, faceOn=false;   // his face's frame loop: on, and its one pending frame (off while hidden: no frames at all)
+let pageT=null;                // his page timers (timersGo), or null while hidden
 let transient=null, transientUntil=0, errorUntil=0;
 let rec=null, transcribing=false, micRaw=0, follow=false, hearRaw=0;   // follow: the no-"hey Void" window after he talks
 try{ muted=localStorage.getItem('void.muted')==='1'; }catch(e){}
@@ -1024,7 +1070,7 @@ const FIDGETS={
 };
 let FID=null, nextFidAt=performance.now()+6000, lastFid='', earTwAt=0;
 function earKick(){ G.earL.kick(-120); G.earR.kick(120); } const paintEl=document.getElementById('paint');
-function frame(ts){
+function frame(ts){ faceRaf=0;
   const rawDt=(ts-(lastTs||ts))/1000, dt=clamp(rawDt,0,.05); lastTs=ts; const t=ts/1000;
   if(!lowFx && rawDt>0 && rawDt<.25 && document.visibilityState==='visible'){ perfAcc+=rawDt; perfN++;
     if(perfN>=120){ if(perfAcc/perfN>.032){ lowFx=true; ['orbBack','orbFront','vring','workW'].forEach(k=>E[k].removeAttribute('filter')); console.log('[void] slow frames — glow off'); } perfAcc=0; perfN=0; } }
@@ -1092,6 +1138,7 @@ function frame(ts){
   else if(fx.tx!=null||fx.ty!=null){ tx=fx.tx??0; ty=fx.ty??0; }
   else if(m==='idle' && ts>saccadeAt && ts-lastMouse>2500){ tx=(Math.random()-.5)*11; ty=(Math.random()-.5)*7; saccadeAt=ts+2400+Math.random()*3800; }
   if(window.gazeHook){ const gz=gazeHook(tx,ty,m,ts); if(gz){ tx=gz[0]; ty=gz[1]; } }   // something else wants his eyes (the code panel)
+  { const hg=helperGaze(ts,m,hovering||menuOn); if(hg){ tx=hg[0]; ty=hg[1]; } }       // …unless one of his helpers catches his eye
   lx=G.gx.to(tx,dt); ly=G.gy.to(ty,dt);
 
   // ---- blink: soft close, slower open (sometimes a double blink)
@@ -1125,10 +1172,10 @@ function frame(ts){
   const spd=G.spd.to(A.spd,dt)+(m==='listening'?micLvl*2.2:0)+(isTalk(m)?lvl*1.4:0);
   const rad=G.rad.to(A.rad,dt)+micLvl*.1, oa=G.oa.to(A.a,dt), ha=G.ha.to(A.h,dt);
   orbT+=dt*spd;
-  const hs=1+micLvl*.07+lvl*.05+Math.sin(t*1.3)*.012;   // glow + ring + sparks move, squish and stretch with him
-  E.haloW.setAttribute('transform',`${bodyTr} scale(${(sx*pump*hs).toFixed(4)},${(sy*pump*hs).toFixed(4)})`);
-  const auraTr=`${bodyTr} scale(${(sx*pump).toFixed(4)},${(sy*pump).toFixed(4)})`;
-  E.vring.setAttribute('transform',auraTr); E.orbBack.setAttribute('transform',auraTr); E.orbFront.setAttribute('transform',auraTr);
+  // Glow, ring and sparks stay put: none of his move, squish, roll or tilt reaches them.
+  const hs=1+micLvl*.07+lvl*.05+Math.sin(t*1.3)*.012;
+  E.haloW.setAttribute('transform',`scale(${hs.toFixed(4)})`);
+  E.vring.removeAttribute('transform'); E.orbBack.removeAttribute('transform'); E.orbFront.removeAttribute('transform');
   E.halo.setAttribute('opacity',clamp(ha+Math.sin(t*1.3)*.07+micLvl*.3+lvl*.25,0,1).toFixed(3));
   ringAmt=approach(ringAmt,m==='listening'?.25+micLvl*1.1:isTalk(m)?lvl*.9:0,dt,10);
   if(ringAmt>.01){ const pts=[];
@@ -1139,7 +1186,7 @@ function frame(ts){
   // working: a bright spark chasing round him for as long as Claude is busy, so you can always tell
   workAmt=approach(workAmt,busy?1:0,dt,busy?5:3);
   if(workAmt>.01){ workRot=(workRot+dt*(toolMood==='running'?300:toolMood?220:150))%360;
-    E.workW.setAttribute('transform',`${auraTr} rotate(${workRot.toFixed(1)})`); E.workW.setAttribute('opacity',(workAmt*.95).toFixed(3)); }
+    E.workW.setAttribute('transform',`rotate(${workRot.toFixed(1)})`); E.workW.setAttribute('opacity',(workAmt*.95).toFixed(3)); }
   else E.workW.setAttribute('opacity','0');
   workChip();
   // menu swoosh: 0 = sparks orbiting him … 1 = sparks gathered where the menu buttons are
@@ -1205,16 +1252,390 @@ function frame(ts){
   // tears
   if(m==='sad' && ts>tearAt){ tearAt=ts+1900+Math.random()*900; tear(Math.random()<.6?-1:1); }
   if(m==='scared') shakeAmp=Math.max(shakeAmp,.5);
-  E.zz.setAttribute('opacity',m==='sleepy'?(.5+Math.sin(t*1.2)*.5).toFixed(2):'0');
-  E.zz.setAttribute('transform',`translate(0,${(-((t*6)%14)).toFixed(1)})`);
+  const zp=Math.min(1,((t/5.2)%1)/.45);                  // (every 5.2 s they drift up for 2.3 s, then rest unseen: one cycle for
+  E.zz.setAttribute('opacity',m==='sleepy'?Math.sin(Math.PI*zp).toFixed(3):'0');   //  rise and fade, so the snap back is never seen)
+  E.zz.setAttribute('transform',`translate(0,${(-zp*14).toFixed(2)})`);
+  if(MINIS.size) miniFrame(ts,dt,dxp);          // his helpers (nothing at all to do while there are none)
   for(let i=parts.length-1;i>=0;i--) if(!parts[i](ts,dt)) parts.splice(i,1);
   capTick(ts);
   if(NATIVE&&!window.voidQt){ const a=(frameN++&1)?'rgba(0,0,0,.004)':'rgba(0,0,0,.006)';   // forces WebKit to repaint the whole window every frame —
     paintEl.style.background=a; document.documentElement.style.background=a; }  // both the page and the root, so the widened edge is covered too
     // (not on Windows: Chromium repaints fine, and there the near-black fill shows as a dim box around him)
-  requestAnimationFrame(frame);
+  if(faceOn&&!faceRaf) faceRaf=requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+// hidden (by the shell, or the page itself): no frames at all; shown again: one loop, its clock reset so the first frame
+// has dt 0 (no catch-up jump). (popping himself up with native('show') starts it at once: no stale frame till voidShown)
+function faceGo(){ faceOn=true; if(faceRaf) return; lastTs=0; faceRaf=requestAnimationFrame(frame); }
+function faceStop(){ faceOn=false; if(faceRaf) cancelAnimationFrame(faceRaf); faceRaf=0; }
+function faceSync(){ if(document.visibilityState==='hidden') faceStop(); else if(!hiddenNow) faceGo(); }
+document.addEventListener('visibilitychange',faceSync);
+faceGo();
+
+/* ================= his helpers (subagents): little Voids =================
+   One splits off his body like a drop of liquid dividing (the same goo as the notch morph): his skin swells into a
+   fat round bulge that pinches off — no stringy neck — and wobbles round; its eyes stay shut till it's free, then
+   open, then it starts to orbit him like an electron — its own ring radius, speed and tilt, passing behind him like
+   the sparks. He glances at each new one as it splits off, and now and then follows one round. When it ends it shuts
+   its eyes, touches his skin and is drunk back in, the same liquid in reverse: done → a green check for a second,
+   then quickly, with a little gulp; stopped → slower; failed → first ~4 s of a calm, flat-eyed look with a red X.
+   One that runs helpers of its own divides the same way, at its size: it shuts its eyes, swells long, and pinches into
+   two eyeless blobs that circle each other as they travel its ring; when its last one ends they come round side by
+   side and drink back together into it, eyes and all (and only then does it end). In the notch they're beads that
+   ooze out of its lip, slide along it and melt back in (one with helpers: two beads rolling round each other). Driven
+   only by the server's sub_start / sub_tick / sub_wait / sub_kids / sub_end events and the `subagents` list in
+   /api/state. The goo filter is on only
+   while one buds or merges; with reduced motion they sit still and fade in and out. */
+const MINIS=new Map(), MINI_R=15, BEAD_R=6.5;
+const RM=window.matchMedia?matchMedia('(prefers-reduced-motion: reduce)'):{matches:false};
+const ML={goo:document.getElementById('miniGoo'),back:document.getElementById('miniBack'),front:document.getElementById('miniFront'),sh:document.getElementById('miniSh'),
+  bgoo:document.getElementById('beadGoo'),bface:document.getElementById('beadFace')};
+let miniCore=null, beadLip=null;
+const miniHash=s=>{ let h=2166136261; for(const c of String(s)) h=Math.imul(h^c.charCodeAt(0),16777619); return (h>>>0)/4294967296; };
+// a free slot → its own ring: radii never repeat (slot·11 mod 26 walks every value), tilt and speed differ too; it buds
+// out of his upper half (node), never lower down, where the terminal he holds would hide the slime or crowd it.
+// Where the ring crosses z = 0 it goes behind him or comes out in front, so both crossings are off his silhouette with
+// room to spare: its line of nodes lies near level (7–22° up at his left or right, so 7–22° down on the other side,
+// where the soft floor hardly bends it), at a radius at least his rim (76) + its radius at a tick (15 · 1.15) + 8.
+// (A level line of nodes is a tilted ring's widest, on screen.) Split in two, its ring widens to fit the pair (miniRx).
+function miniOrbit(id){
+  const used=new Set([...MINIS.values()].map(m=>m.slot)); let slot=0; while(used.has(slot)) slot++;
+  const h=miniHash(id), h2=miniHash(id+'~'), up=.12+((slot*.382+h)%1)*.26;
+  return {slot, R:102+(slot*11)%26, Rx:0, w:(.5+((slot*.37+h)%1)*.4)*(slot%2?-1:1), inc:.25+((slot*.29+h2)%1)*.75,
+          node:((slot*.618+h2)%1)<.5?Math.PI+up:2*Math.PI-up, bph:slot*1.9+h*6.283, bw:(.32+((slot*.41+h2)%1)*.22)*(slot%2?1:-1)};
+}
+// on its ring at angle th: (x, y) on screen and z toward you (z < 0: behind him)
+function orbitPos(m,th){ const R=m.R+(m.Rx||0), c=Math.cos(th)*R, s=Math.sin(th)*R, y0=s*Math.cos(m.inc), cn=Math.cos(m.node), sn=Math.sin(m.node);
+  return [c*cn-y0*sn, miniFloor(c*sn+y0*cn), s*Math.sin(m.inc)]; }
+// a tilted ring dips to y ≈ 128, through his floor (108): below centre it eases into a soft floor instead, skimming
+// just over its own shadow (its top: 108 less its biggest radius, MINI_R at k ≈ 1.3 when near and ticking, and a gap)
+const MINI_FLOOR=108-MINI_R*1.3-4, miniFloor=y=>y>0?MINI_FLOOR*Math.tanh(y/MINI_FLOOR):y;
+function miniTipHTML(m){ const st=m.waiting?'waiting for your OK':m.st==='fail'||m.status==='failed'?"didn't finish":m.status==='done'?'done':m.status==='stopped'?'stopped':'';
+  const kids=m.kids>0?`${m.kids} sub-helper${m.kids>1?'s':''}`:'';
+  return `<b>${esc(m.type||'helper')}</b>${esc(m.desc||'')}${kids?`<i> · ${kids}</i>`:''}${st?`<i> · ${st}</i>`:''}`; }
+let tipFor=null; const tipEl=$('#miniTip');
+function miniTip(m,e){
+  if(!e){ if(tipFor===m){ tipFor=null; tipEl.classList.remove('on'); } return; }
+  tipFor=m; tipEl.innerHTML=miniTipHTML(m);
+  const [ix,iy]=barInXY(), bx=(e.clientX-layoutX-ix)/fitK, by=(e.clientY-iy)/fitK;
+  tipEl.style.left=clamp(bx+12,4,340-tipEl.offsetWidth-4).toFixed(0)+'px'; tipEl.style.top=clamp(by-30,4,436).toFixed(0)+'px';
+  tipEl.classList.add('on');
+}
+function miniHover(el,m){ el.addEventListener('mouseenter',e=>miniTip(m,e)); el.addEventListener('mousemove',e=>miniTip(m,e));
+  el.addEventListener('mouseleave',()=>miniTip(m,null)); }
+function miniMake(m){
+  const g=sv('g',{class:'mini',opacity:0}); m.el=g;
+  m.ring=sv('circle',{r:MINI_R+3.5,fill:'none',stroke:'#ffb02a','stroke-width':1.6,opacity:0},g);
+  m.sgoo=sv('g',{class:'mn-goo'},g);
+  m.skin=sv('g',{},g); sv('circle',{class:'mn-h',r:MINI_R+3.2},m.skin); sv('circle',{class:'mn-b',r:MINI_R},m.skin);   // (a faint glow, like his, so a dark body still reads)
+  m.tw=[0,1].map(()=>{ const t=sv('g',{opacity:0},g); sv('circle',{class:'mn-h',r:MINI_R+3.2},t); sv('circle',{class:'mn-b',r:MINI_R},t); return t; });
+  m.twFront=1;                                    // (its two halves when it splits: the nearer one drawn last)
+  m.eyes=sv('g',{},g); m.pups=[];
+  for(const s of [-1,1]){ const e=sv('g',{transform:`rotate(${-s*9} ${s*5.2} -1)`},m.eyes);
+    // (pupils rest just inside centre, so a glance can't push one off its white while the other stays put)
+    sv('ellipse',{class:'mn-w',cx:s*5.2,cy:-1,rx:4.4,ry:7.4},e); const pp=sv('ellipse',{class:'mn-p',cx:s*4,cy:-1,rx:1.15,ry:3.5},e); pp._cx=s*4; pp._s=s; m.pups.push(pp); }
+  ML.front.appendChild(g); m.back=false; miniHover(g,m);
+  m.sh=sv('ellipse',{cy:108,rx:0,ry:0,fill:'url(#shG)',opacity:0},ML.sh);   // its shadow, on his floor
+  m.sh2=sv('ellipse',{cy:108,rx:0,ry:0,fill:'url(#shG)',opacity:0},ML.sh);  // (and its second half's, while it's split)
+  m.bd=sv('circle',{class:'mn-bead',r:0,fill:'#000'},ML.bgoo); miniHover(m.bd,m);
+  m.bd2=sv('circle',{class:'mn-bead',r:0,fill:'#000',opacity:0},ML.bgoo); miniHover(m.bd2,m);
+  m.be=sv('g',{},ML.bface); m.bes=[-1,1].map(s=>sv('ellipse',{cx:s*2.6,cy:-.6,rx:1.5,ry:1.9},m.be));
+}
+function miniAdd(ev){
+  if(!ev||!ev.id) return null;
+  let m=MINIS.get(ev.id);
+  if(m){ if(ev.type) m.type=ev.type; if(ev.desc) m.desc=ev.desc; return m; }
+  const n=performance.now(), rm=RM.matches;
+  m={id:ev.id, type:ev.type||'', desc:ev.desc||'', bg:!!ev.bg, waiting:!!ev.waiting, ...miniOrbit(ev.id),
+     st:'bud', t0:n, born:n, dur:rm?320:850, th:0, spdK:1, flat:0, tickAt:-1e9, glance:[0,0], blinkAt:n+1500+Math.random()*3000, px:null, py:null, goo:null,
+     kids:Math.max(0,ev.kids|0), sv:0, svDir:0, phi:0, pinchAt:0, alignTo:null};
+  MINIS.set(m.id,m); miniMake(m);
+  if(!rm) G.jelly.kick(.25);                      // he squeezes it out
+  hgaze={m, until:n+(rm?700:1100)}; hgazeNext=Math.max(hgazeNext,n+6000+Math.random()*9000);   // ooh, a new one: he looks
+  return m;
+}
+function miniEnd(m,status,ts){
+  if(m.st==='merge'||m.st==='fail'||m.st==='done') return;
+  m.status=status==='done'||status==='stopped'?status:'failed';
+  if(m.st==='bud'||m.sv>0){ m.pend=true; return; }   // let it finish budding first, or its halves come back together
+  if(m.status==='failed'){ m.st='fail'; m.t0=ts; m.el.classList.add('fail'); miniBadge(m,false,ts); if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); return; }
+  if(m.status==='done'){ m.st='done'; m.t0=ts; miniBadge(m,true,ts); if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); return; }   // a check, then in
+  miniMerge(m,ts);
+}
+// its badge (a check or an X in a disc), on the little Void's shoulder and, smaller, on its bead in the notch
+function miniBadge(m,ok,ts){
+  const mk=(par,k)=>{ const g=sv('g',{class:'mn-badge '+(ok?'ok':'no'),opacity:0},par); g._k=k;
+    sv('circle',{class:'bd-c',r:5.6},g); sv('path',{class:'bd-g',d:ok?'M-2.7 .1L-.8 2.1L2.8-2':'M-2-2L2 2M2-2L-2 2'},g); return g; };
+  m.bdT=ts; m.bdg=mk(m.el,1); m.bbg=mk(ML.bface,.62);
+}
+// how big it is now: pops in (a little overshoot), shrinks away as the helper starts to merge
+function miniBadgeK(m,ts,rm,p){
+  if(!m.bdT) return 0;
+  let k=1; if(!rm){ const x=Math.min(1,(ts-m.bdT)/260)-1; k=1+2.70158*x*x*x+1.70158*x*x; }
+  if(m.st==='merge') k*=1-smooth(p/.25);
+  return Math.max(0,k);
+}
+function badgeAt(g,x,y,k){ g.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)}) scale(${(k*g._k).toFixed(3)})`); g.setAttribute('opacity',clamp(k,0,1).toFixed(3)); }
+function miniMerge(m,ts){ const rm=RM.matches;
+  m.st='merge'; m.t0=ts; m.from=null; m.dur=rm?(m.status==='done'?300:600):(m.status==='done'?700:900);
+  if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
+function miniGone(m){
+  if(m.goo) m.goo.forEach(c=>c.remove());
+  m.el.remove(); m.sh.remove(); m.sh2.remove(); m.bd.remove(); m.bd2.remove(); m.be.remove(); if(m.bbg) m.bbg.remove(); MINIS.delete(m.id); miniTip(m,null);
+  if(m.status==='done'&&!RM.matches&&!document.body.classList.contains('bar')) G.jelly.kick(.35);   // gulp
+  if(!MINIS.size){ gooSet(false); beadGooSet(false,null); sendRegion(true); }
+}
+function gooSet(on){
+  if(on&&!miniCore){ miniCore=sv('circle',{r:72}); ML.goo.insertBefore(miniCore,ML.goo.firstChild); ML.goo.setAttribute('filter','url(#gooM)'); }
+  else if(!on&&miniCore){ miniCore.remove(); miniCore=null; ML.goo.removeAttribute('filter'); }
+}
+function beadGooSet(on,geo){
+  if(on){ if(!beadLip){ beadLip=sv('rect',{rx:18,fill:'#000'}); ML.bgoo.insertBefore(beadLip,ML.bgoo.firstChild); ML.bgoo.setAttribute('filter','url(#gooS)'); }
+    const [x,y,w,h]=geo.lip; beadLip.setAttribute('x',x); beadLip.setAttribute('y',y); beadLip.setAttribute('width',w); beadLip.setAttribute('height',h); }
+  else if(beadLip){ beadLip.remove(); beadLip=null; ML.bgoo.removeAttribute('filter'); }
+}
+// the liquid between him and a helper splitting off / being drunk in: the drop itself (squashed and stretched along
+// the line out of him), a bulge of his skin under it and a fat waist joining the two — the goo rounds them into one
+// and, as the waist and bulge sink back, pinches them apart (they're too fat to ever draw a thread)
+function miniSlime(m,gp){
+  if(!gp){ if(m.goo){ m.goo.forEach(c=>c.remove()); m.goo=null; } return false; }
+  if(!m.goo) m.goo=[sv('ellipse',{},ML.goo),sv('circle',{},ML.goo),sv('circle',{},ML.goo)];
+  const [d,b,w]=m.goo, ca=Math.cos(gp.a), sa=Math.sin(gp.a), f=v=>Math.max(0,v).toFixed(2);
+  d.setAttribute('cx',gp.x.toFixed(1)); d.setAttribute('cy',gp.y.toFixed(1)); d.setAttribute('rx',f(gp.r*gp.sx)); d.setAttribute('ry',f(gp.r*gp.sy));
+  d.setAttribute('transform',`rotate(${(gp.a*180/Math.PI).toFixed(1)} ${gp.x.toFixed(1)} ${gp.y.toFixed(1)})`);
+  b.setAttribute('cx',(ca*66).toFixed(1)); b.setAttribute('cy',(sa*66).toFixed(1)); b.setAttribute('r',f(gp.bulge));
+  const wd=(76+gp.d-gp.r*gp.sx)/2;                                  // (between his skin and the drop's near side)
+  w.setAttribute('cx',(ca*wd).toFixed(1)); w.setAttribute('cy',(sa*wd).toFixed(1)); w.setAttribute('r',f(gp.waist));
+  return true;
+}
+// the stretch of a drop that just let go: it springs back round, a few dying wobbles
+const miniWob=u=>.2*Math.exp(-u*6)*Math.cos(u*21);
+// a helper running helpers of its own divides in two. m.sv: 0 one little Void … 1 two blobs, side by side across its
+// own centre at m.phi (they circle each other); it goes up while it has helpers out on its ring, and down when they've
+// all ended (or it has): first round to side by side, so they drink back together across, never through, each other
+const SPLIT_R=11.5, SPLIT_D=18;
+function miniSplitStep(m,ts,dt,rm){
+  if(m.st==='orbit'&&m.kids>0&&!m.pend){
+    if(!m.sv) m.phi=0;
+    m.svDir=1; m.alignTo=null;
+    const was=m.sv; m.sv=Math.min(1,m.sv+dt/(rm?.32:.9));
+    if(was<.76&&m.sv>=.76) m.pinchAt=ts;                               // (free of each other: it wobbles)
+    if(!rm) m.phi+=2.6*m.spdK*dt*smooth((m.sv-.6)/.4);                   // round each other, once apart
+  } else if(m.sv>0){
+    if(!rm&&m.svDir>0){
+      if(m.alignTo==null) m.alignTo=(m.sv>.95?Math.ceil:Math.round)(m.phi/Math.PI)*Math.PI;   // (on round, not back)
+      const step=2.6*Math.max(m.spdK,.4)*dt;
+      m.phi=m.phi<m.alignTo?Math.min(m.alignTo,m.phi+step):Math.max(m.alignTo,m.phi-step);
+      if(m.phi!==m.alignTo) return;
+    }
+    m.svDir=-1; m.pinchAt=0;
+    m.sv=Math.max(0,m.sv-dt/(rm?.32:.75));
+  }
+}
+// the split at m.sv, the same liquid as budding off him: eyes shut and gone (no shut sliver left over the halves), its
+// skin gives way to the goo, which swells long round a fat waist; the waist sinks and the two ends pinch apart (too fat
+// to draw a thread), wobble, and put their own skins on. d: each half's distance from its centre, r: a half's radius,
+// w: the waist, sk1/sk2: the one skin / the halves' skins, eo: the eyes', gp: the goo's on. Back together it runs in
+// reverse. Reduced motion: a cross-fade, side by side.
+function miniSplitGeo(m,ts,rm,goo){
+  const p=m.sv, S=MINI_R;
+  if(rm) return {d:SPLIT_D, r:SPLIT_R, w:0, sk1:1-p, sk2:p, open:1, eo:1-p, gp:false, sx:1};
+  const g={d:p<.22?0:p<.7?14*easeIO((p-.22)/.48):lerp(14,SPLIT_D,easeOutC((p-.7)/.2)), r:lerp(S*.86,SPLIT_R,smooth((p-.2)/.4)),
+           w:S*(1-smooth((p-.3)/.28)), sk1:1-smooth((p-.1)/.14), sk2:smooth((p-.74)/.12), open:1-smooth(p/.14), eo:1-smooth((p-.1)/.06),
+           gp:goo&&p>.06&&p<.9, sx:1};
+  if(!goo){ g.sk1=1-smooth((p-.1)/.3); g.sk2=smooth((p-.15)/.3); return g; }           // (glow off: no goo)
+  if(m.svDir>0) g.sx=m.pinchAt?1+miniWob((ts-m.pinchAt)/1000):p<.76?1+.2*smooth((p-.25)/.51):1;   // pulled long, let go
+  else g.sx=1+.2*Math.sin(Math.PI*clamp((.86-p)/.5,0,1));                               // drawn long toward each other
+  return g;
+}
+// where its halves are: ± (x, y) from its centre, z toward you (their turn round each other is tilted like its ring)
+function miniPair(m,sg){ const c=Math.cos(m.phi), s=Math.sin(m.phi); return [c*sg.d, s*sg.d*.38, s]; }
+function miniTwins(m,sg){
+  if(!sg){ if(m.twOn){ m.tw.forEach(t=>t.setAttribute('opacity',0)); miniPairGoo(m,null); m.ring.setAttribute('r',MINI_R+3.5); m.twOn=false; } return; }
+  m.twOn=true;
+  const [ox,oy,oz]=miniPair(m,sg), ax=Math.atan2(oy,ox)*180/Math.PI, sy=1-.5*(sg.sx-1), pz=smooth((m.sv-.6)/.4)*.08;
+  m.tw.forEach((t,i)=>{ const s=i?1:-1, q=sg.r/MINI_R*(1+s*oz*pz);
+    t.setAttribute('transform',`translate(${(s*ox).toFixed(2)},${(s*oy).toFixed(2)}) rotate(${ax.toFixed(1)}) scale(${(sg.sx*q).toFixed(3)},${(sy*q).toFixed(3)}) rotate(${(-ax).toFixed(1)})`);
+    t.setAttribute('opacity',sg.sk2.toFixed(3)); });
+  const fr=oz>=0?1:0; if(m.twFront!==fr){ m.el.insertBefore(m.tw[fr],m.eyes); m.twFront=fr; }
+  m.ring.setAttribute('r',(Math.max(MINI_R,sg.d+sg.r)+3.5).toFixed(1));               // (waiting: round the pair)
+  miniPairGoo(m,sg.gp?sg:null,ox,oy,ax,sy);
+}
+// the goo while it divides: its two ends and the waist between them, rounded into one by #gooM till they pinch apart
+// (inside the little Void's own group, so it's in front of him or behind him with the rest of it)
+function miniPairGoo(m,sg,ox,oy,ax,sy){
+  if(!sg){ if(m.pg){ m.pg.forEach(c=>c.remove()); m.pg=null; m.sgoo.removeAttribute('filter'); } return; }
+  if(!m.pg){ m.pg=[sv('ellipse',{},m.sgoo),sv('ellipse',{},m.sgoo),sv('circle',{},m.sgoo)]; m.sgoo.setAttribute('filter','url(#gooM)'); }
+  const f=v=>Math.max(0,v).toFixed(2);
+  [-1,1].forEach((s,i)=>{ const e=m.pg[i], cx=(s*ox).toFixed(2), cy=(s*oy).toFixed(2);
+    e.setAttribute('cx',cx); e.setAttribute('cy',cy); e.setAttribute('rx',f(sg.r*sg.sx)); e.setAttribute('ry',f(sg.r*sy));
+    e.setAttribute('transform',`rotate(${ax.toFixed(1)} ${cx} ${cy})`); });
+  m.pg[2].setAttribute('r',f(sg.w));
+}
+// a shadow on his floor under (x, y): smaller and fainter the higher it flies (darkest skimming it)
+function miniShade(el,x,y,r,o){ const fl=clamp((MINI_FLOOR-y)/240,0,1), sr=r*(1.1-.55*fl);
+  el.setAttribute('cx',x.toFixed(1)); el.setAttribute('rx',sr.toFixed(2)); el.setAttribute('ry',(sr*.16).toFixed(2));
+  el.setAttribute('opacity',clamp(o*(1-.75*fl),0,1).toFixed(3)); }
+// split, its ring widens so the pair clears his rim at the crossings as one little Void does: its rim at a tick (k ≤ 1.15)
+// reaches the far half's centre (d) plus that half's radius, drawn up to 8% nearer and stretched 20% as it lets go
+function miniRx(m,sg){ return sg?Math.max(0,76+10+1.15*Math.max(MINI_R,sg.d+sg.r*1.3)-m.R):0; }
+function orbDraw(m,ts,dt,p,rm,goo){
+  const S=MINI_R;
+  let x,y,z=0,op=1,k=1,gp=null,a=0,d=0,sx=1,sk=1,open=1;
+  const sg=m.sv>0?miniSplitGeo(m,ts,rm,goo):null; m.Rx=miniRx(m,sg);
+  if(rm){ const a=-Math.PI/2+m.slot*.9+.45; x=Math.cos(a)*112; y=miniFloor(Math.sin(a)*112); op=m.st==='bud'?p:m.st==='merge'?1-p:1; }
+  else if(m.st==='bud'){   // his skin swells, the drop rounds out of it and pinches off, wobbles round, opens its eyes
+    a=m.node;
+    d=p<.4?lerp(56,86,easeOutC(p/.4)):p<.56?lerp(86,100,easeIO((p-.4)/.16)):lerp(100,m.R,easeIO((p-.56)/.44));
+    sx=p<.5?1+.2*smooth(p/.5):1+miniWob((p-.5)*m.dur/1000);           // pulled long while it hangs on, then let go
+    sk=smooth((p-.52)/.14); open=smooth((p-.64)/.16);                   // free: its real skin over the liquid, then eyes
+    if(p<.72) gp={r:S*(.55+.45*smooth(p/.4)), bulge:S*1.05*smooth(p/.3)*(1-smooth((p-.42)/.2)),
+                  waist:S*.85*smooth((p-.15)/.2)*(1-smooth((p-.38)/.14))};
+    if(!goo){ op=easeOutC(p/.6); k=.4+.6*easeOutC(p/.6); sk=1; } }
+  else if(m.st==='merge'){   // eyes shut, it drifts up to his skin, touches, and is drunk back in
+    if(!m.from){ const [a0,b0,c0]=orbitPos(m,m.th); let a=Math.atan2(b0,a0);
+      if(Math.sin(a)>-.15) a=Math.cos(a)>=0?-.15:Math.PI+.15;                                  // (his upper half: the terminal hides or crowds it lower down)
+      m.from=[a0,b0,c0,a]; }
+    const [a0,b0,c0,a1]=m.from; a=a1;
+    d=p<.32?104:p<.48?lerp(104,88,easeInC((p-.32)/.16)):lerp(88,58,easeIO(clamp((p-.48)/.42,0,1)));
+    open=1-smooth((p-.16)/.16); sk=1-smooth((p-.3)/.12);
+    sx=p<.36?1:1+.2*Math.sin(Math.PI*clamp((p-.36)/.5,0,1));          // drawn long toward him as he drinks it
+    if(p>.28) gp={r:S*(1-.5*smooth((p-.5)/.4)), bulge:S*1.05*smooth((p-.36)/.14)*(1-smooth((p-.7)/.25)),
+                  waist:S*.85*smooth((p-.4)/.12)*(1-smooth((p-.68)/.2))};
+    if(!goo){ op=p>.3?1-(p-.3)/.7:1; k=1-.4*smooth((p-.4)/.6); sk=1; } }
+  else [x,y,z]=orbitPos(m,m.th);
+  if(!rm&&(m.st==='bud'||m.st==='merge')){ x=Math.cos(a)*d; y=Math.sin(a)*d;
+    if(m.st==='merge'&&p<.32){ const e=easeIO(p/.32); x=lerp(m.from[0],x,e); y=lerp(m.from[1],y,e); z=lerp(m.from[2],0,e); d=Math.hypot(x,y); }  // out of its ring, to his side
+    if(!goo){ gp=null; sx=1; }                                          // (glow off: no goo)
+    if(gp) Object.assign(gp,{x,y,a,d,sx,sy:1-.5*(sx-1)}); }
+  k*=1+z/m.R*.18+.15*Math.exp(-(ts-m.tickAt)/180);
+  // behind him while its ring is (z < 0), in front of him while it's in front: it changes layer right where the ring
+  // crosses (z = 0), always well off his silhouette (miniOrbit, miniRx), so it never passes through him
+  const back=z<0;
+  if(back!==m.back){ (back?ML.back:ML.front).appendChild(m.el); m.back=back; }
+  const deg=(a*180/Math.PI).toFixed(1), st=sx===1?'':` rotate(${deg}) scale(${sx.toFixed(3)},${(1-.5*(sx-1)).toFixed(3)}) rotate(${-deg})`;
+  m.el.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})${st} scale(${k.toFixed(3)})`);
+  m.el.setAttribute('opacity',clamp(op,0,1).toFixed(3));
+  m.skin.setAttribute('opacity',(sk*(sg?sg.sk1:1)).toFixed(3));
+  // its shadow under it on his floor, none while it's still in his skin; split, each half has its own
+  const so=op*(rm||!(m.st==='bud'||m.st==='merge')?1:smooth((d-56)/40)), [ox,oy]=sg?miniPair(m,sg):[0,0],
+        sr=(sg?lerp(S,sg.r,smooth(m.sv/.5)):S)*k;
+  miniShade(m.sh,x-ox*k,y-oy*k,sr,so);
+  if(sg||m.sh2on){ miniShade(m.sh2,x+ox*k,y+oy*k,sr,sg?so*(rm?m.sv:smooth(m.sv/.3)):0); m.sh2on=!!sg; }
+  m.open=open*(sg?sg.open:1);
+  m.eo=(rm||!goo||!(m.st==='bud'||m.st==='merge')||(m.st==='merge'&&p<.32)?1:smooth((d-82)/10))*(sg?sg.eo:1);   // (not drawn over him while in his skin)
+  const vx=m.px==null?0:(x-m.px)/Math.max(dt,1e-3), vy=m.py==null?0:(y-m.py)/Math.max(dt,1e-3); m.px=x; m.py=y;
+  miniEyes(m,ts,vx,vy,rm);
+  miniTwins(m,sg);
+  return miniSlime(m,gp);
+}
+// eyes: flat when it failed, a blink now and then, pupils glance where it's going (somewhere new on each tool use)
+function miniEyes(m,ts,vx,vy,rm){
+  if(!rm&&ts>m.blinkAt+160) m.blinkAt=ts+2600+Math.random()*4200;
+  const bp=(ts-m.blinkAt)/160, blink=bp<0||bp>1?0:Math.sin(Math.PI*bp);
+  const o=m.open==null?1:m.open, op=o+.18*Math.sin(Math.PI*o);         // (shut till it's free; they pop open)
+  const sy=Math.max(.06,(1-.8*m.flat)*(1-.9*blink)*op);
+  m.eyes.setAttribute('transform',`translate(0,${(m.flat*2).toFixed(2)}) scale(1,${sy.toFixed(3)})`);
+  m.eyes.setAttribute('opacity',(m.eo==null?1:m.eo).toFixed(3));
+  let gx,gy; if(ts-m.tickAt<450){ [gx,gy]=m.glance; } else { const v=Math.hypot(vx,vy)||1; gx=vx/v*1.3; gy=vy/v*1.3; }
+  if(rm||o<1){ gx*=rm?0:o; gy*=rm?0:o; }
+  const ps=m.waiting?1.35:1;
+  // each eye is tilted ±9°: turn the glance into that eye's frame so both pupils move the same way on screen
+  m.pups.forEach(pp=>{ const a=pp._s*.157, lx=gx*Math.cos(a)-gy*Math.sin(a), ly=gx*Math.sin(a)+gy*Math.cos(a);
+    pp.setAttribute('transform',`translate(${(lx+pp._cx*(1-ps)).toFixed(2)},${(ly-(1-ps)).toFixed(2)}) scale(${ps})`); });   // (bigger round its own centre)
+  m.ring.setAttribute('opacity',m.waiting&&m.st!=='merge'?(rm?.8:(.45+.35*Math.sin(ts/300))).toFixed(2):'0');
+}
+// where the notch's lip is right now (it changes size as it opens for his words), in page px
+function beadGeo(edge){
+  const pl=$('#barPill'), L=pl.offsetLeft, T=pl.offsetTop, W=pl.offsetWidth, H=pl.offsetHeight, horiz=edge==='top'||edge==='bottom';
+  return {lip:[L,T,W,H], horiz, c:horiz?L+W/2:T+H/2, half:Math.max(16,(horiz?W:H)/2-22),
+          base:edge==='top'?T+H:edge==='bottom'?T:edge==='left'?L+W:L, n:edge==='top'||edge==='left'?1:-1};
+}
+function beadDraw(m,ts,dt,p,geo,rm,goo){
+  if(!rm&&(m.st==='orbit'||m.st==='fail'||m.st==='done')) m.bph+=m.bw*m.spdK*dt;
+  let o=3, r=BEAD_R, op=1;
+  if(m.st==='bud'){ const e=easeOutC(p); if(rm) op=p; else { o=lerp(-9,3,e); r=BEAD_R*e; } }
+  else if(m.st==='merge'){ if(rm) op=1-p; else { const e=easeInC(p); o=lerp(3,-10,e); r=BEAD_R*(1-.45*e); } }
+  else if(m.waiting&&!rm) o=3+Math.sin(ts/260)*1.2;
+  const along=geo.c+geo.half*(rm?clamp(-.75+(m.slot*.5)%1.5,-.9,.9):Math.sin(m.bph)), out=geo.base+geo.n*o;
+  // with helpers of its own: two smaller eyeless beads, rolling round each other along the lip (the finer goo parts them)
+  const e=m.sv>0?(rm?1:smooth(m.sv)):0, sp=e*BEAD_R*1.25, pa=Math.cos(m.phi)*sp, po=Math.sin(m.phi)*sp*.5, br=Math.max(0,r*(1-.2*e));
+  const at=s=>{ const al=along+s*pa, ou=out+geo.n*s*po; return [clamp(geo.horiz?al:ou,8,332), clamp(geo.horiz?ou:al,8,452)]; };   // (always inside his window)
+  const [x,y]=at(-1);
+  m.bd.setAttribute('cx',x.toFixed(1)); m.bd.setAttribute('cy',y.toFixed(1)); m.bd.setAttribute('r',br.toFixed(2));
+  m.bd.setAttribute('opacity',op.toFixed(3));
+  if(m.sv>0||m.bd2on){ const [x2,y2]=at(1); m.bd2on=m.sv>0;
+    m.bd2.setAttribute('cx',x2.toFixed(1)); m.bd2.setAttribute('cy',y2.toFixed(1)); m.bd2.setAttribute('r',br.toFixed(2));
+    m.bd2.setAttribute('opacity',(m.sv>0?op*(rm?m.sv:1):0).toFixed(3)); }
+  m.lk=geo.horiz?[(along-geo.c)/geo.half,geo.n]:[geo.n,(along-geo.c)/geo.half];      // where it is, for his eyes (see helperGaze)
+  if(!rm&&ts>m.blinkAt+160) m.blinkAt=ts+2600+Math.random()*4200;
+  const bp=(ts-m.blinkAt)/160, blink=bp<0||bp>1?0:Math.sin(Math.PI*bp);
+  const fail=m.st==='fail'||m.status==='failed', eo=(m.st==='bud'?smooth((p-.5)/.4):m.st==='merge'?1-smooth(p/.4):1)*op*(rm?1-m.sv:1-smooth(m.sv/.3));
+  m.be.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)}) scale(1,${Math.max(.1,(1-.75*m.flat)*(1-.9*blink)).toFixed(3)})`);
+  m.be.setAttribute('opacity',eo.toFixed(3));
+  m.bes.forEach(e=>e.setAttribute('fill',m.waiting&&!fail?'#ffb02a':'var(--whiteL,#f3dccf)'));
+  if(m.bbg){ const d=4.6; badgeAt(m.bbg,clamp(x+(geo.horiz?d:geo.n*d),4,336),clamp(y+(geo.horiz?geo.n*d:-d),4,456),miniBadgeK(m,ts,rm,p)*op); }   // its check / X, on the outer side
+  return goo&&(m.st==='bud'||m.st==='merge'||(m.sv>0&&m.sv<1));
+}
+function miniFrame(ts,dt,dxp){
+  const inBar=document.body.classList.contains('bar'), rm=RM.matches, goo=!lowFx&&!rm, edge=inBar?(barEdge()||'top'):null;
+  const geo=inBar?beadGeo(edge):null, tr=`translate(${dxp.toFixed(2)},0)`;
+  if(!inBar){ ML.goo.setAttribute('transform',tr); ML.back.setAttribute('transform',tr); ML.front.setAttribute('transform',tr); ML.sh.setAttribute('transform',tr); }
+  let slime=false, beadSlime=false;
+  for(const m of [...MINIS.values()]){
+    if(m.st==='bud'&&ts-m.t0>=m.dur){ m.st='orbit'; m.t0=ts; m.spdK=0; }
+    if(m.pend&&m.st==='orbit'&&!m.sv){ m.pend=false; const s=m.status; m.status=null; miniEnd(m,s,ts); }   // (it ended while budding or split)
+    if(m.st==='fail'&&ts-m.t0>=4000) miniMerge(m,ts);
+    if(m.st==='done'&&ts-m.t0>=700) miniMerge(m,ts);       // (its check shows for a moment first)
+    if(m.st==='merge'&&ts-m.t0>=m.dur){ miniGone(m); continue; }
+    const p=clamp((ts-m.t0)/m.dur,0,1);
+    m.spdK=approach(m.spdK,m.st==='fail'?.2:m.waiting?.35:1,dt,3);
+    miniSplitStep(m,ts,dt,rm);
+    if(!rm&&(m.st==='orbit'||m.st==='fail'||m.st==='done')) m.th+=m.w*m.spdK*dt;
+    m.flat=approach(m.flat,m.st==='fail'||m.status==='failed'?1:0,dt,rm?40:5);
+    if(inBar) beadSlime=beadDraw(m,ts,dt,p,geo,rm,goo)||beadSlime;
+    else { slime=orbDraw(m,ts,dt,p,rm,goo)||slime; if(m.bdg) badgeAt(m.bdg,11,-11,miniBadgeK(m,ts,rm,p)); }
+    if(inBar) miniSlime(m,null);
+  }
+  gooSet(slime); beadGooSet(beadSlime,geo);
+}
+// his eyes on his helpers: a look at each new one as it buds (miniAdd), and every 6–15 s he follows one round its ring
+// for 1.5–3 s. Feeds the gaze target in frame(); never while he's listening, speaking or asking you something.
+let hgaze=null, hgazeNext=0;
+function helperGaze(ts,m,away){
+  if(!MINIS.size){ hgaze=null; return null; }
+  if(away||rec||follow||playing||m==='listening'||m==='pleading'||isTalk(m)){ hgaze=null; hgazeNext=Math.max(hgazeNext,ts+3000); return null; }
+  if(hgaze&&(ts>hgaze.until||!MINIS.has(hgaze.m.id)||hgaze.m.st==='merge')) hgaze=null;
+  if(!hgaze&&ts>hgazeNext){ const c=[...MINIS.values()].filter(x=>x.st==='orbit');
+    if(c.length) hgaze={m:c[Math.random()*c.length|0], until:ts+1500+Math.random()*1500};
+    hgazeNext=(hgaze?hgaze.until:ts)+6000+Math.random()*9000; }
+  if(!hgaze) return null; const h=hgaze.m;
+  if(document.body.classList.contains('bar')) return h.lk?[h.lk[0]*7,h.lk[1]*5]:null;
+  if(h.px==null) return null;
+  const d=Math.hypot(h.px,h.py)||1, k=Math.min(1,d/90);
+  return [h.px/d*7*k, h.py/d*6*k];
+}
+function miniTick(ev){ const m=MINIS.get(ev.id); if(!m) return; m.tool=ev.tool||''; m.tickAt=performance.now(); m.glance=[(Math.random()-.5)*3.2,(Math.random()-.5)*2.4]; }
+function miniWait(ev){ const m=MINIS.get(ev.id); if(!m) return; m.waiting=!!ev.on; if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
+function miniKids(ev){ const m=MINIS.get(ev.id); if(!m) return; m.kids=Math.max(0,ev.n|0); if(tipFor===m) tipEl.innerHTML=miniTipHTML(m); }
+function miniEndEv(ev){ let m=MINIS.get(ev.id);
+  if(!m&&ev.status==='failed'&&(ev.type||ev.desc)) m=miniAdd(ev);   // it failed to even start: still show it, briefly
+  if(m) miniEnd(m,ev.status,performance.now()); }
+// the server's list of running helpers (page reloaded, or the event stream reconnected): add what's missing, let go
+// of what has ended (but not one that only just started: its event may have beaten this list here)
+function miniSync(list){
+  if(!Array.isArray(list)) return; const n=performance.now(), ids=new Set();
+  for(const s of list){ if(!s||!s.id) continue; ids.add(s.id); const m=miniAdd(s); if(m&&m.waiting!==!!s.waiting) miniWait({id:s.id,on:s.waiting});
+    if(m&&m.kids!==Math.max(0,s.kids|0)) miniKids({id:s.id,n:s.kids}); }
+  for(const m of [...MINIS.values()]) if(!ids.has(m.id)&&(m.st==='bud'||m.st==='orbit')&&!m.status&&n-m.born>3000) miniEnd(m,'stopped',n);
+}
+// clickable spots for hovering them, while there are any (click-through / notch: the rest of the window lets clicks through)
+function miniRegion(rs,add,inBar){
+  if(inBar){ const r=$('#barPill').getBoundingClientRect(), e=barEdge()||'top', R=Math.round, d=18*fitK;
+    if(e==='top') rs.push([R(r.left),R(r.bottom-2),R(r.width),R(d)]); else if(e==='bottom') rs.push([R(r.left),R(r.top-d+2),R(r.width),R(d)]);
+    else if(e==='left') rs.push([R(r.right-2),R(r.top),R(d),R(r.height)]); else rs.push([R(r.left-d+2),R(r.top),R(d),R(r.height)]);
+    return; }
+  for(const m of MINIS.values()) if(m.st!=='merge') add(m.el,18);
+}
 
 /* ================= voice out (sentence-streamed) ================= */
 let actx=null, spkAn=null, srcs=[], curIt=null, playing=false, gen=0, nextAt=0, pumpGen=-1; const q=[];
@@ -1397,6 +1818,14 @@ async function events(){
   }
 }
 function onEvent(ev){
+  if(ev.t==='hello'){ refresh(); return; }           // (re)connected: catch up on his helpers
+  if(ev.t==='sub_start'){ miniAdd(ev); return; }
+  if(ev.t==='sub_tick'){ miniTick(ev); return; }
+  if(ev.t==='sub_wait'){ miniWait(ev); return; }
+  if(ev.t==='sub_kids'){ miniKids(ev); return; }
+  if(ev.t==='sub_end'){ miniEndEv(ev); wake(); return; }
+  if(ev.t==='followup_soon'){ wake(); if(!busy) poke('thinking',30000); return; }   // a helper is back: he's mulling it over (its words come with the followup)
+  if(ev.t==='followup'){ if(transient==='thinking') transient=null; followQ.push(ev); followTry(); return; }
   if(ev.t==='saw'){ poke('looking',1800); wake(); return; }   // Claude took a look at your screen (`void see`)
   if(ev.t==='follow'){ follow=!!ev.on; hearRaw=0; if(follow) wake(); return; }
   if(ev.t==='hear'){ hearRaw=ev.v; return; }
@@ -1426,7 +1855,7 @@ function onEvent(ev){
 /* ================= mic (recorded by the server — no browser permissions involved) ================= */
 async function startRec(mode){
   if(rec||transcribing||(busy&&mode!=='approve')) return null;
-  if(mode!=='approve') shush();
+  if(mode!=='approve'){ if(followCur){ followQ.unshift(followCur); followCur=null; clearTimeout(followT); followT=setTimeout(followTry,600); } shush(); }   // (a helper's result you cut off: told again after)
   wake(); hideAsk(); menu(false);
   const r=rec={mode,stopping:false,opened:false,cancelled:false};
   if(mode!=='approve'){ capShow(); setYou('listening…'); himSet(''); sfx('wake'); }
@@ -1454,11 +1883,17 @@ function stopRec(cancel){ const r=rec; if(!r) return; r.stopping=true; if(cancel
 
 /* ================= caption ================= */
 // Claude tags how it means each sentence ("[proud] Fixed it.") — see VOICE_PROMPT in server.py. The tags drive his face
-// and are never shown or spoken.
+// and are never shown or spoken. A non-English name is marked with its language, "{fr:Les Jardins}" (langmark.py):
+// the server says it in French, we only show the words. Code is left alone, so `{id:5}` stays code.
 const FACE_TAG=/\[(neutral|happy|proud|excited|laugh|warm|curious|unsure|thinking|surprised|sorry|serious)\]\s*/gi;
-const untag=s=>String(s||'').replace(FACE_TAG,'');
+const MARK=/(```[\s\S]*?```|`[^`\n]*`)|\{([a-z]{2}(?:-[a-z]{2})?):([^{}\n]+)(?:\}|$)/gi, OPEN_MARK=/\{[a-z]{2}(?:-[a-z]{2})?:[^{}\n]*$/i;
+const unmark=s=>String(s||'').replace(MARK,(m,code,lang,w)=>code||w);
+const unface=s=>String(s||'').replace(FACE_TAG,'');       // (what's spoken: the {fr:…} marks stay)
+const untag=s=>unmark(unface(s));                         // what's shown
+const whole=m=>!m||!OPEN_MARK.test(m[0])?m:m[0].slice(0,m[0].search(OPEN_MARK)).match(/^[\s\S]*[.!?:](?=\s)/);   // never cut a {fr:…} in two
+const sentences=raw=>(raw.match(/[^.!?]+(?:[.!?]+|$)\s*/g)||[raw]).reduce((a,s)=>{ if(a.length&&OPEN_MARK.test(a[a.length-1])) a[a.length-1]+=s; else a.push(s); return a; },[]);
 function karaParse(text){ const ws=[], faces=[]; let pend=null, tagged=false;
-  for(const tok of plain(String(text||'')).replace(FACE_TAG,m=>' '+m.trim()+' ').split(/\s+/)){
+  for(const tok of unmark(plain(String(text||''))).replace(FACE_TAG,m=>' '+m.trim()+' ').split(/\s+/)){
     if(!tok) continue; const m=tok.match(/^\[(neutral|happy|proud|excited|laugh|warm|curious|unsure|thinking|surprised|sorry|serious)\]$/i);
     if(m){ pend=m[1].toLowerCase(); tagged=true; continue; }
     ws.push(tok); faces.push(pend); pend=null; }
@@ -1580,7 +2015,10 @@ function nextApproval(){
     /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(a.tool)?'Can I change this file?':`Can I use ${a.tool}?`;
   $('#apQ').textContent=what; $('#apCmd').textContent=a.detail;
   { const al=apEl.querySelector('[data-ans="always"]'); if(al) al.hidden=a.always===false; }   // not for chained commands
-  const spoken=a.say||what;   // the server says what it does in plain words (the card shows the real command)
+  // one of his helpers is asking (it may be long after his reply): say which one
+  const ag=a.agent&&typeof a.agent==='object'?a.agent:null, who=$('#apWho');
+  who.hidden=!ag; who.innerHTML=ag?`<b>${esc(ag.type||'helper')}</b> · ${esc(ag.desc||'a helper')} is asking`:'';
+  const spoken=(ag?`${ag.desc||'One of my helpers'} asks: `:'')+(a.say||what);   // the server says what it does in plain words (the card shows the real command)
   askAloud(a,spoken);
 }
 async function askAloud(a,spoken){
@@ -1640,7 +2078,7 @@ async function send(text,opts={}){
   const kv=voiced(); let fresh=true;        // kv: the caption follows his voice instead of racing ahead of it
   let buf='', spoken=0, all='', failed=false, stopped=false, ignored=false, tools=0; const t0=performance.now();
   const flush=end=>{ const rest=buf.slice(spoken); if((buf.match(/```/g)||[]).length%2 && !end) return;
-    const m2=end?[rest]:(rest.match(/^[\s\S]*[.!?:](?=\s)/)||(spoken===0?rest.match(/^[\s\S]{70,}?[,;—–](?=\s)/):null)); if(m2&&m2[0].trim()){ const raw=plain(m2[0]); if(kv){ enqueue(untag(raw),{cap:raw,fresh}); fresh=false; } else enqueue(untag(raw)); spoken+=m2[0].length; } };
+    const m2=end?[rest]:whole(rest.match(/^[\s\S]*[.!?:](?=\s)/)||(spoken===0?rest.match(/^[\s\S]{70,}?[,;—–](?=\s)/):null)); if(m2&&m2[0].trim()){ const raw=plain(m2[0]); if(kv){ enqueue(unface(raw),{cap:raw,fresh}); fresh=false; } else enqueue(unface(raw)); spoken+=m2[0].length; } };
   const handle=ev=>{ switch(ev.t){
     case 'break': flush(true); if(buf.trim()) fresh=true; buf=''; spoken=0; break;
     case 'delta': CP.answer(); toolMood=null; workWhat='answering'; buf+=ev.text; all+=ev.text; if(!kv) showHim(buf); flush(false); break;
@@ -1658,7 +2096,7 @@ async function send(text,opts={}){
     await readSSE(res,handle);
   }catch(e){ failed=true; himSet(e.message,true); }
   busy=false; toolMood=null; wake(); capQuiet(); document.body.classList.remove('busy'); workChip(); CP.done();
-  while(apprQ.length) apprQ.pop(); if(pendingAppr){ pendingAppr=null; nextApproval(); }
+  // (approval cards stay: a helper may still be asking after his reply; the server ends each one with approve_done)
   if(ignored){ setYou(''); himSet(''); cap.classList.add('off'); capOn=false; return; }   // you weren't talking to him: say and show nothing
   const answerText=untag(buf||all).trim();
   lastAnswer=answerText; moreEl.classList.toggle('on',answerText.length>220||/```/.test(answerText));
@@ -1676,6 +2114,27 @@ async function send(text,opts={}){
     const m=task||big?'excited':['happy','wink','joy'][Math.random()*3|0];
     whenQuiet(()=>{ poke(m,m==='excited'?2600:1700); if(m==='excited'&&barEdge()) notchPulse('#3ddc84'); }); }
   refresh();
+}
+
+/* a helper's result, told unasked ("the search finished, here's what it found"). Never over you or over himself: it
+   waits while you talk, he talks, records, works on something or asks you something, then plays. Hidden: a
+   notification instead (or he pops up first, if "pop up when done" is on). */
+const followQ=[]; let followT=null, followCur=null;   // followCur: the one he's telling now (until he's said it)
+function followTry(){
+  clearTimeout(followT); followT=null; if(!followQ.length) return;
+  if(hiddenNow&&!info.popup_done){ const f=followQ.shift();
+    if(info.notify_done) post('/api/notify',{title:f.ok===false?'A helper hit a problem':'A helper finished',body:plain(untag(f.text||'')).slice(0,240)});
+    followT=setTimeout(followTry,300); return; }
+  if(hiddenNow){ native('show'); followT=setTimeout(followTry,700); return; }
+  const typing=ask.classList.contains('on')&&input.value.trim();
+  if(busy||playing||rec||transcribing||follow||pendingAppr||pwReq||q.length||spkMap.size||typing){ followT=setTimeout(followTry,400); return; }
+  const f=followQ.shift(), raw=plain(f.text||'').trim();
+  if(raw){ followCur=f; wake(); capShow(); setYou(''); himSet(''); sfx('remind');
+    if(voiced()){ let fresh=true; for(const s of sentences(raw)) if(s.trim()){ enqueue(unface(s),{cap:s,fresh}); fresh=false; } }
+    else { himSet(untag(raw)); enqueue(unface(raw)); }
+    capQuiet(); lastAnswer=untag(f.text).trim(); moreEl.classList.toggle('on',lastAnswer.length>220||/```/.test(lastAnswer));
+    whenQuiet(()=>{ if(followCur!==f) return; followCur=null; poke(f.ok===false?'sad':'happy',1500); }); }
+  if(followQ.length) followT=setTimeout(followTry,600);
 }
 
 // run fn once he has finished talking (right away if he isn't): faces that sum something up belong after his words
@@ -1728,7 +2187,11 @@ async function openPanel(kind){
   }
   sendRegion(true);
 }
-const copy=async t=>{ try{ await navigator.clipboard.writeText(t); tick('copied'); sfx('ok'); }catch(err){ tick("couldn't copy",true); } };
+const putClip=async t=>{                           // the web clipboard refuses when the window isn't focused → let the server copy
+  try{ await navigator.clipboard.writeText(t); return true; }catch(err){}
+  try{ return !!(await (await post('/api/copy',{text:t})).json()).ok; }catch(err){ return false; }
+};
+const copy=async t=>{ if(await putClip(t)){ tick('copied'); sfx('ok'); } else tick("couldn't copy",true); };
 // a small, safe markdown → HTML for answers (code blocks get a copy button)
 function md(src){
   const out=[]; let i=0; const parts=String(src||'').split(/```/);
@@ -1754,7 +2217,7 @@ panelEl.addEventListener('click',async e=>{
     if(e.target.closest('#hClear')){ await post('/api/history',{op:'clear'}); return openPanel('history'); }
     const it=e.target.closest('.item'); if(!it) return; const h=body._items[+it.dataset.i]; const b=e.target.closest('[data-h]');
     if(!b){ it.classList.toggle('open'); return; }
-    if(b.dataset.h==='copy'){ try{ await navigator.clipboard.writeText(h.him||''); tick('copied'); }catch(err){ tick("couldn't copy",true); } }
+    if(b.dataset.h==='copy'){ const ok=await putClip(h.him||''); tick(ok?'copied':"couldn't copy",!ok); }
     if(b.dataset.h==='again'){ closePanels(); send(h.you); }
     if(b.dataset.h==='cont'){ const r=await post('/api/resume',{session:h.session,cwd:h.cwd}); const j=await r.json();
       if(j.error) return tick(j.error,true); info=j; showInfo(); closePanels(); tick('↩ back in that chat · '+j.cwd_display); poke('happy',900); capShow(); setYou(h.you); himSet(h.him); }
@@ -1883,19 +2346,85 @@ function melt(edge,dir,done){
     if(t<1) requestAnimationFrame(frame); else { const d=meltDone; meltDone=null; d&&d(false); }
   })(t0);
 }
+// How far in from the screen edge the notch hangs, in window px (macOS: just under the menu bar, or beside the Dock,
+// while they're really there: the window says, voidBarInset). The whole page sits that far in while he's docked, so
+// everything drawn against the edge goes with it; docking and undocking ease it in and out under the morph.
+let barIn=0, barInTo=0, barInN=0, shifting=false;
+function barInXY(){ const b=document.body.classList, e=barIn&&(b.contains('bar')||b.contains('unfold'))?EDGES.find(x=>b.contains('e-'+x)):null;
+  return !e?[0,0]:e==='top'?[0,barIn]:e==='bottom'?[0,-barIn]:e==='left'?[barIn,0]:[-barIn,0]; }
+function barInSet(v){ barIn=v; fit(); }
+function tweenIn(to,dur){ const n=++barInN, from=barIn, t0=performance.now();
+  if(RM.matches||from===to){ barInSet(to); return; }
+  (function f(now){ if(n!==barInN) return; const t=Math.min(1,(now-t0)/dur); barInSet(from+(to-from)*easeIO(t));
+    if(t<1) requestAnimationFrame(f); else sendRegion(true); })(t0); }
+// settles like the notch's own springs: past it a little, back, and still
+const barSpr=x=>x<=0?0:x>=1?1:1-Math.exp(-5.5*x)*Math.cos(9.5*x);
+// Docked, the notch moves to hang at another depth (the menu bar or the Dock came or went): never a slide or a snap,
+// the notch morph's liquid. Away from the edge it drips: a fat drop swells out of its open side and leads, the notch
+// is drawn long after it, lets go of what it hung from and wobbles to rest. Back toward the edge it's slurped up: a
+// thick tongue reaches from it to the edge, the notch is drunk up along it and wobbles to rest. His eyes ride it.
+function barShift(to){
+  const b=document.body, pl=$('#barPill'), edge=barEdge(); if(!edge){ barInSet(to); return; }
+  const n=++meltN, k=fitK||1, pf=barIn/k, pt=to/k, pd=pt-pf, t0=performance.now(), dur=720, o=24;
+  barInN++; clearTimeout(morphT); shifting=true;
+  const bar=$('#gooBar'), ball=$('#gooBall'), drop=$('#gooDrop'), horiz=edge==='top'||edge==='bottom';
+  const D=horiz?pl.offsetHeight:pl.offsetWidth, S=horiz?pl.offsetWidth:pl.offsetHeight, c=(horiz?pl.offsetLeft:pl.offsetTop)+S/2;
+  for(const el of [bar,ball,drop,...$$('.gooN')]) el.setAttribute('fill','#000');
+  $$('.gooN').forEach(el=>el.setAttribute('r',0));
+  // u: page px in from the screen's edge, a: along it → x, y on the page (which itself sits barIn in)
+  const pt2=(u,a)=>{ u-=barIn/k; return edge==='top'?[a,u]:edge==='bottom'?[a,460-u]:edge==='left'?[u,a]:[340-u,a]; };
+  const f=v=>Math.max(0,v).toFixed(1), at=v=>v.toFixed(1);    // (sizes can't go below 0; places can: past the page's top)
+  meltDone=instant=>{ shifting=false; barInSet(to); b.classList.remove('goohide'); sendRegion(true);
+    const end=()=>b.classList.remove('gooing'); if(instant) end(); else morphT=setTimeout(end,110); };
+  b.classList.add('gooing','goohide');
+  (function frame(now){
+    if(n!==meltN) return;
+    const t=Math.min(1,(now-t0)/dur);
+    let cur, top, sp=S, tg=null, dr=0;
+    if(pd>0){                                                 // drip
+      cur=pf+pd*barSpr((t-.1)/.9);
+      top=pf+pd*easeInC((t-.3)/.45)-o;                          // (it lets go up there: under the bar that came)
+      dr=Math.min(16,S*.06)*Math.sin(Math.PI*clamp(t/.5,0,1));
+    } else {                                                  // slurp
+      const up=pf+pd*easeIO(clamp((t-.18)/.42,0,1));
+      cur=pf+pd*barSpr((t-.22)/.78);
+      top=up-o*clamp(1-(up-pt)/o,0,1);                          // (as it gets there, it comes to hang from it)
+      tg=[pf+pd*easeOutC(t/.35), up+12, S*.16*smooth(t/.15)*(1-smooth((t-.45)/.2))];
+    }
+    barInSet(cur*k);
+    const bot=cur+D;
+    sp=S*(1-.12*clamp((bot-(top+o)-D)/Math.max(1,Math.abs(pd)),0,1));   // drawn long, it's thinner
+    const [x0,y0]=pt2(top,c-sp/2), [x1,y1]=pt2(bot,c+sp/2);
+    bar.setAttribute('x',at(Math.min(x0,x1))); bar.setAttribute('y',at(Math.min(y0,y1)));
+    bar.setAttribute('width',f(Math.abs(x1-x0))); bar.setAttribute('height',f(Math.abs(y1-y0)));
+    const [dx,dy]=pt2(bot+dr*.35,c); drop.setAttribute('cx',dx.toFixed(1)); drop.setAttribute('cy',dy.toFixed(1)); drop.setAttribute('r',f(dr));
+    if(tg){ const [ex,ey]=pt2((tg[0]+tg[1])/2,c), len=Math.max(0,(tg[1]-tg[0])/2);
+      ball.setAttribute('cx',ex.toFixed(1)); ball.setAttribute('cy',ey.toFixed(1));
+      ball.setAttribute('rx',f(horiz?tg[2]:len)); ball.setAttribute('ry',f(horiz?len:tg[2])); }
+    else { ball.setAttribute('rx',0); ball.setAttribute('ry',0); }
+    if(t<1) requestAnimationFrame(frame); else { const d=meltDone; meltDone=null; d&&d(false); }
+  })(t0);
+}
+// the window: the notch hangs `px` in from its edge now (glide: it moved while docked, so it oozes there)
+window.voidBarInset=(px,glide)=>{ barInTo=Math.max(0,+px||0);
+  if(!document.body.classList.contains('bar')) return;     // (not docked: that's where he'll hang when he is)
+  if(meltDone&&!shifting){ tweenIn(barInTo,300); return; } // (still flowing into the notch: it just aims there)
+  if(!glide||RM.matches){ barInN++; barInSet(barInTo); sendRegion(true); return; }
+  if(barInTo!==barIn) barShift(barInTo); };
 function setBarClass(edge,pulled){
   const b=document.body; snapMorph(); clearTimeout(morphT);
   if(!edge&&pulled&&b.classList.contains('bar')){
     // pulled out by the mouse: the notch melts away on the wall by itself (the window leaves a ghost of it there);
     // here he just pops straight out as the blob under your hand — eyes in place at once, ball bouncing in
     b.classList.add('snap'); b.classList.remove('bar','bar-done','gooing','goohide');
-    EDGES.forEach(e=>b.classList.remove('e-'+e)); b.classList.add('popout'); G.jelly.kick(.9);
+    EDGES.forEach(e=>b.classList.remove('e-'+e)); b.classList.add('popout'); G.jelly.kick(.9); barInN++; barInSet(0);
     requestAnimationFrame(()=>requestAnimationFrame(()=>b.classList.remove('snap')));
     morphT=setTimeout(()=>b.classList.remove('popout'),360);
   } else if(edge){
     b.classList.remove('unfold','bar-done','gooing','goohide');
     EDGES.forEach(e=>b.classList.toggle('e-'+e,edge===e));
     b.classList.add('gooing','goohide','bar');                  // eyes glide up; the liquid does the rest
+    tweenIn(barInTo,400);                                       // (in past the menu bar / the Dock as it flows in)
     // at the end the real notch fades in over the liquid, and only then does the liquid go
     melt(edge,1,instant=>{ b.classList.remove('goohide');
       const end=()=>{ b.classList.remove('gooing'); b.classList.add('bar-done'); };
@@ -1903,10 +2432,11 @@ function setBarClass(edge,pulled){
   } else if(b.classList.contains('bar')){
     const from=barEdge();
     b.classList.remove('bar-done'); b.classList.add('gooing','goohide','unfold'); b.classList.remove('bar'); G.jelly.kick(.6);
+    tweenIn(0,440);
     melt(from,-1,instant=>{ b.classList.remove('goohide');            // his real ball fades in over the drop…
       const end=()=>{ b.classList.remove('gooing','unfold'); EDGES.forEach(e=>b.classList.remove('e-'+e)); };
       if(instant) end(); else morphT=setTimeout(end,140); });
-  } else EDGES.forEach(e=>b.classList.remove('e-'+e));
+  } else { EDGES.forEach(e=>b.classList.remove('e-'+e)); if(barIn){ barInN++; barInSet(0); } }
   const l=$('[data-a="bar"] span'); if(l) l.textContent=edge?'blob':'top bar'; sendRegion(true);
 }
 window.voidDock=(edge,how)=>{ edge=EDGES.includes(edge)?edge:''; if(menuOn) menu(false); setBarClass(edge,how==='pull'); info.presence=edge?'bar':'orb'; info.bar_edge=edge||info.bar_edge;
@@ -1954,15 +2484,15 @@ function dropSync(){
 // the notch's halo: hearing you (with your voice level) vs him speaking
 function convoCheck(){
   if(!document.body.classList.contains('bar')){ const p=$('#barPill');
-    if(p.style.height||p.style.width||p.classList.contains('big')){ p.style.height=p.style.width=p.style.marginTop=p.style.marginLeft=''; p.classList.remove('big');
-      for(const el of [$('#code'),$('#cap')]) el.style.width=el.style.left=el.style.top=''; }
+    if(p.style.height||p.style.width||p.classList.contains('big')){ p.style.height=p.style.width=p.style.marginTop=p.style.marginLeft=''; p.classList.remove('big'); }
+    // (on its own: the top notch with nothing showing leaves the pill unsized, but dropSync placed these anyway)
+    for(const el of [$('#code'),$('#cap')]) if(el.style.top) el.style.width=el.style.left=el.style.top='';
     return; }
   dropSync();
   const hearing=!!(rec||follow), b=document.body;
   b.classList.toggle('hearing',hearing); b.classList.toggle('speaking',!!playing);
   if(hearing) $('#barPill').style.setProperty('--lv',Math.min(1,Math.max(micRaw||0,hearRaw||0)).toFixed(2));
 }
-setInterval(convoCheck,50);
 window.voidBarUnsupported=()=>{ tick('the top bar needs layer-shell or X11 on this desktop',true); setSetting({presence:'orb'}); info.presence='orb'; setBarClass(''); };
 window.voidHoverUnsupported=()=>{ tick('hover mode needs Hyprland or X11 on this desktop',true); setSetting({hover:false}); setHoverClass(false); };
 window.voidLook=(dx,dy)=>{ lastMouse=performance.now(); const m=mood(lastMouse);
@@ -2085,6 +2615,9 @@ function renderPtt(){
   const k=info.ptt_hotkey||'', b=$('#pttSet');
   if(info.platform==='windows'){
     b.textContent=pttCapture?'Press your keys…':(k||'Set a hotkey'); $('#pttOff').hidden=!k||pttCapture;
+  }else if(info.platform==='macos'){
+    $('#pttBar').hidden=true;
+    $('#pttHelp').innerHTML=`Not on macOS yet: hold <code>Space</code> while his window has focus, or bind <code>void listen</code> to a key (e.g. a Shortcuts or Raycast hotkey).`;
   }else{
     const [m,key]=pttLinux(k); $('#pttBar').hidden=true;
     $('#pttHelp').innerHTML=`Hold a key combo anywhere to talk. Bind it in your desktop, e.g. Hyprland:<br><code>bind = ${esc(m)}, ${esc(key)}, exec, void ptt-down</code><br><code>bindr = ${esc(m)}, ${esc(key)}, exec, void ptt-up</code><br>sway: <code>bindsym</code> … <code>void ptt-down</code> and <code>bindsym --release</code> … <code>void ptt-up</code>. Other desktops: bind <code>void listen</code>.`;
@@ -2118,8 +2651,7 @@ async function copyDiagnostics(){
   try{
     const j=await (await post('/api/diagnostics')).json(), pre=$('#diagPrev');
     pre.textContent=j.text; pre.hidden=false;
-    let ok=false;
-    try{ await navigator.clipboard.writeText(j.text); ok=true; }catch(e){}
+    let ok=await putClip(j.text);
     if(!ok){ const r=document.createRange(), s=getSelection(); r.selectNodeContents(pre); s.removeAllRanges(); s.addRange(r);
       try{ ok=document.execCommand('copy'); }catch(e){} s.removeAllRanges(); }
     tick(ok?'copied — paste it into a GitHub issue':'select the report below and copy it',!ok);
@@ -2230,16 +2762,23 @@ function showInfo(){ syncEye(); document.body.classList.toggle('faceyou',info.co
   document.body.classList.toggle('root',!!info.root); }
 async function refresh(){ try{ await tokenReady; const r=await fetch('/api/state',{headers:hdr()}); const j=await r.json();
   if(!('cwd' in j)) return staleToken();      // no (or an old) token: the server only said it's running
-  info=j; showInfo(); announceUpdate(); }catch(e){} }
+  info=j; showInfo(); announceUpdate(); miniSync(j.subagents); }catch(e){} }
 function toggleMute(){ muted=!muted; try{localStorage.setItem('void.muted',muted?'1':'0');}catch(e){} if(muted) shush(); tick(muted?'voice off':'voice on'); if(setEl.classList.contains('on')) renderSettings(); }
+
+// his page timers: the notch halo (convoCheck), the click region, the /api/state poll — same rates while he's shown,
+// none while hidden by the shell; shown again: one of each, and (now) the halo and region up to date at once, not a tick later
+function timersGo(now){ if(pageT) return;
+  pageT=[setInterval(convoCheck,50), setInterval(()=>sendRegion(false),400), setInterval(()=>{ if(!busy) refresh(); },15000)];
+  if(now){ convoCheck(); sendRegion(false); } }
+function timersStop(){ if(pageT) pageT.forEach(clearInterval); pageT=null; }
 
 // hidden (Esc, hide, closing him) = fully off: he stops talking and the server closes the mic — no "hey Void" until
 // he's shown again (Start menu, your hotkey, or `void`)
-window.voidHidden=()=>{ hiddenNow=true; endListening(); menu(false); hideAsk(); shush(); post('/api/sleep',{on:true}).catch(()=>{}); };
-window.voidShown=()=>{ hiddenNow=false; post('/api/sleep',{on:false}).catch(()=>{}); entrance(); wake(); refresh().then(()=>{ syncEye(true); if(pendingAppr||busy) return;
+window.voidHidden=()=>{ hiddenNow=true; faceStop(); timersStop(); endListening(); menu(false); hideAsk(); shush(); post('/api/sleep',{on:true}).catch(()=>{}); };
+window.voidShown=()=>{ hiddenNow=false; faceGo(); timersGo(true); post('/api/sleep',{on:false}).catch(()=>{}); entrance(); wake(); refresh().then(()=>{ syncEye(true); if(pendingAppr||busy) return;
   if(info.listen_on_show&&!info.hover) setTimeout(()=>startRec('auto'),450); else setTimeout(()=>poke('wink',900),350); }); };
 async function comeBack(){ if(!info.hover) return; await toggleHover(false); await sleep(700); }
-window.voidCmd=async c=>{ hiddenNow=false;
+window.voidCmd=async c=>{ hiddenNow=false; faceSync(); timersGo(true);
   if(c==='home'){ return comeBack(); }
   if(c==='listen'){ await comeBack(); if(rec) stopRec(false); else startRec('auto'); }
   else if(c==='look'){ await comeBack(); shoot('window').then(j=>{ if(j) startRec('auto'); }); }
@@ -2252,14 +2791,23 @@ window.voidCmd=async c=>{ hiddenNow=false;
 let lastRegion='';
 function calmCheck(){ document.body.classList.toggle('calm', setEl.classList.contains('on')||panelEl.classList.contains('on')||apEl.classList.contains('on')); }
 // the page is laid out for 340×460: if the window ends up a different size, scale/centre it instead of cutting things off
-let fitK=1, layoutX=0;
+// layoutX: where he starts in the window (Qt: its room on his left, from the first frame); roomL: how much of that room
+// the panels and the terminal may use (null: all of it); boxX: where that starts (the window's left edge, as they see it)
+let fitK=1, layoutX=window.voidLayoutX|0, roomL=null, boxX=0;
 function fit(){ const k=Math.min(1, innerWidth/340, innerHeight/460); fitK=k>0.995?1:k; const bs=document.body.style;
   bs.transformOrigin='0 0'; bs.margin='0'; bs.marginLeft=layoutX+'px';
-  bs.transform=fitK===1?'':`scale(${fitK})`;
+  const [ix,iy]=barInXY();                        // (in the notch: in from the edge, past the menu bar or the Dock)
+  bs.transform=((ix||iy?`translate(${ix}px,${iy}px)`:'')+(fitK===1?'':` scale(${fitK})`)).trim();
+  boxX=roomL==null?0:Math.max(0,layoutX-roomL);   // (body transformed: the panels are laid out in it, not the window)
+  document.documentElement.style.setProperty('--bx',(bs.transform?0:boxX)+'px');
   if(NATIVE&&fitK<1) console.log(`[void] window is ${innerWidth}x${innerHeight} (expected 340x460) — scaling the page to fit`); }
 // the window widened for a panel: it grew to the left by ox px, so shift the page back and he stays exactly where he was
 window.voidLayout=ox=>{ layoutX=ox|0; fit(); sendRegion(true); requestAnimationFrame(moveInd); };
+// …or (Qt) the room is always there and only this much of it is for the panels and the terminal: he never moves
+window.voidRoom=px=>{ roomL=px|0; fit(); sendRegion(true); requestAnimationFrame(moveInd); };
 addEventListener('resize',()=>{ fit(); sendRegion(true); moveInd(); }); fit();
+// (a resize event can come while the view is still at its startup placeholder size and none after: watch the page too)
+if(window.ResizeObserver) new ResizeObserver(()=>{ fit(); sendRegion(true); moveInd(); }).observe(document.documentElement);
 function sendRegion(force){
   calmCheck();
   if(!NATIVE) return;
@@ -2281,9 +2829,9 @@ function sendRegion(force){
   if(apEl.classList.contains('on')) add(apEl,4); if(pwEl.classList.contains('on')) add(pwEl,4);
   $$('#atts .at').forEach(a=>add(a,2));
   if(moreEl.classList.contains('on')) add(moreEl,2);
+  if(MINIS.size) miniRegion(rs,add,inBar);
   const s=JSON.stringify(rs); if(!force&&s===lastRegion) return; lastRegion=s; native('region:'+s);
 }
-setInterval(()=>sendRegion(false),400);
 // panels slide in — re-measure once they've landed so their clickable area matches what you see
 addEventListener('transitionend',e=>{ if(e.target.matches&&e.target.matches('#menu,.pn,#appr,#ask,#pwbox')) sendRegion(true); });
 
@@ -2308,7 +2856,7 @@ addEventListener('mousemove',ev=>{ wake(); lastMouse=performance.now();
   if(dragged && downAt && mode.layer && !mode.cursor && (ev.buttons&1)) native(`dragby:${(ev.clientX-downAt[0]).toFixed(0)},${(ev.clientY-downAt[1]).toFixed(0)}`);
   if(!(ev.buttons&1)) downAt=null;
   if(document.body.classList.contains('hover')) return;
-  const r=$('#guy').getBoundingClientRect(); tx=clamp((ev.clientX-r.left-r.width/2)/innerWidth*16,-7,7); ty=clamp((ev.clientY-r.top-r.height/2)/innerHeight*12,-6,6); });
+  const r=$('#guy').getBoundingClientRect(); tx=clamp((ev.clientX-r.left-r.width/2)/(innerWidth-boxX)*16,-7,7); ty=clamp((ev.clientY-r.top-r.height/2)/innerHeight*12,-6,6); });
 // cut him off: stop Claude (if it's working) and stop talking. Click / Space then go straight to listening.
 async function interrupt(){ const was=busy; shush(); CP.hide(); sfx('pop'); poke('surprised',650); G.jelly.kick(.5);
   if(was){ post('/api/stop'); for(let i=0;i<80&&busy;i++) await sleep(50); } }
@@ -2376,7 +2924,7 @@ const CP=(()=>{
   const faceYou=()=>info.code_face==='you';
   function geo(){ const b=ball(); return {cx:b.left+b.width/2, cy:b.top+b.height/2, r:b.width/2}; }
   function roomFor(gx){ if(!gx) return true; const {cx}=geo(), x=cx+gx*15, half=W/2+14;     // would the paper fit there?
-    return x-half>=0 && x+half<=innerWidth; }
+    return x-half>=boxX && x+half<=innerWidth; }
   window.gazeHook=(tx,ty,m,ts)=>{
     if(!on) return null;
     if(ts>lookUntil){
@@ -2397,14 +2945,14 @@ const CP=(()=>{
     const {cx,cy,r}=geo();
     // the paper only goes where he's *looking away to* — not with every flick of his eyes
     const gx=glancing?look[0]:0, gy=glancing?look[1]:4.2, half=W/2+14;
-    const tx=clamp(cx+gx*15,half,innerWidth-half);          // never off the edge (rotation + tilt included)
+    const tx=clamp(cx+gx*15,boxX+half,innerWidth-half);     // never off the edge (rotation + tilt included)
     const dx=tx-cx, clear=Math.abs(dx)-(W/2+r*.62);          // > 0: it's fully beside his face, so it may come up
     const under=cy+r*.56+H/2+2, side=clamp(clear/(r*.4),0,1);
     const yMin=under+(cy-r*.5-under)*side;
     const ty=clamp(Math.max(cy+r*.5+gy*6,yMin)+Math.sin(ts/1400)*.8,H/2+4,innerHeight-H/2-4);
     if(!pos){ sp.x=cx; sp.y=cy+r*.4; sp.vx=sp.vy=0; }      // comes out from in front of him
     sp.vx+=((tx-sp.x)*45-sp.vx*9.5)*dt; sp.vy+=((ty-sp.y)*45-sp.vy*9.5)*dt; sp.x+=sp.vx*dt; sp.y+=sp.vy*dt;
-    sp.x=clamp(sp.x,half-6,innerWidth-half+6);              // a springy overshoot mustn't poke out of the window
+    sp.x=clamp(sp.x,boxX+half-6,innerWidth-half+6);         // a springy overshoot mustn't poke out of the window
     sp.r+=(clamp(sp.vx*.02,-6,6)-sp.r)*Math.min(1,dt*8);   // tips a little only while it's moving
     pos={x:sp.x,y:sp.y,cx,cy};
     const turn=clamp((sp.x-cx)/(r+W/2),-1,1);
@@ -2501,7 +3049,7 @@ refresh().then(()=>{
 });
 applyLook(LOOK_DEFAULT);
 events();
-setInterval(()=>{ if(!busy) refresh(); },15000);
+timersGo();
 </script>
 </body>
 </html>

@@ -102,9 +102,9 @@ from_source(){
     esac
   fi
   if [ -d "$src/.git" ]; then
-    say "Updating the source in $src…"; git -C "$src" pull --ff-only || die "couldn't update $src (git pull)"
+    say "Updating the source in ${src}…"; git -C "$src" pull --ff-only || die "couldn't update $src (git pull)"
   elif command -v git >/dev/null 2>&1; then
-    say "Getting the source (git clone) into $src…"; rm -rf "$src"
+    say "Getting the source (git clone) into ${src}…"; rm -rf "$src"
     git clone --depth 1 "https://github.com/$REPO.git" "$src" || die "git clone failed — check your internet connection"
   else
     warn "no git — downloading the source as an archive (you'll update by running this installer again)"

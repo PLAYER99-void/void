@@ -1,5 +1,6 @@
 """Void's window on Windows: a see-through, always-on-top, frameless Qt window with his page in it (QtWebEngine,
-i.e. Chromium). It speaks the same messages with the page as window.py (the GTK/WebKit window on Linux).
+i.e. Chromium). It speaks the same messages with the page as window.py (the GTK/WebKit window on Linux). macOS uses
+this window too, with macsys.py for the few things Qt can't do itself.
 
     window_win.py URL [toggle|show|hide|quit|listen|look|live|hover|hover-on|hover-off]
     window_win.py URL --selftest out.png      (load him, save a picture of the window, quit — for test machines)
@@ -21,26 +22,121 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP))
-import winsys  # noqa: E402
+MAC = sys.platform == "darwin"
+if MAC:
+    import macsys as winsys  # noqa: E402  (the same shape: data_dir & co., plus the Cocoa bits used below)
+else:
+    import winsys  # noqa: E402
 for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF-8, not the old Windows code page
     if _s is not None and hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
 
+DATA = winsys.data_dir()
+SELFTEST = False                                                         # --selftest / --selftest-bar run (main() sets it)
+
+
+class Started:
+    """The one record of the server this app started (the launcher's, or the window's own restart of it): its pid
+    (the leader of its own process group, so its children share the group) and its run id. Quitting stops that server
+    and its children, and only if the server answering on its port still has that run id: one this app didn't
+    start is never touched."""
+
+    @staticmethod
+    def _file():
+        return DATA / "started.json"
+
+    @classmethod
+    def record(cls, pid, run_id):
+        cls._file().write_text(json.dumps({"pid": int(pid), "id": run_id}))
+
+    @classmethod
+    def stop(cls):
+        if sys.platform == "win32" or SELFTEST:                          # (a selftest never stops a server)
+            return
+        try:
+            rec = json.loads(cls._file().read_text())
+            pid, rid = int(rec["pid"]), rec["id"]
+            port = json.loads((DATA / "runtime.json").read_text())
+            if not rid or port.get("id") != rid or port.get("pid") != pid:   # (not a racer's dead or reused pid)
+                cls._forget()
+                return
+            import urllib.request
+            with urllib.request.urlopen(f"http://127.0.0.1:{int(port['port'])}/api/id", timeout=2) as r:
+                if json.load(r).get("id") != rid:
+                    cls._forget()
+                    return
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return                                                        # (undecided: the record stays for next time)
+        cls._forget()
+        import signal
+        try:
+            group = os.getpgid(pid) == pid                                # (never the group of whoever launched it)
+        except OSError:
+            return
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pid, sig) if group else os.kill(pid, sig)
+            except OSError:
+                return
+            for _ in range(20 if sig == signal.SIGTERM else 5):
+                time.sleep(0.1)
+                if cls._gone(pid):
+                    return
+
+    @classmethod
+    def _forget(cls):
+        try:
+            cls._file().unlink()
+        except OSError:
+            pass
+
+    @staticmethod
+    def _gone(pid):
+        """Has the server gone? Ours is our own child (a zombie until reaped, which kill(pid, 0) never notices): reap it."""
+        try:
+            return os.waitpid(pid, os.WNOHANG)[0] == pid
+        except ChildProcessError:                                         # not our child: just ask whether it exists
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            return False
+        except OSError:
+            return True
+
+
+if __name__ == "__main__" and sys.argv[1:2] in (["--started"], ["--stop-started"]):   # the launcher's way in (no Qt)
+    if sys.argv[1] == "--started":
+        Started.record(sys.argv[2], sys.argv[3])
+    else:
+        Started.stop()
+    sys.exit(0)
+
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--autoplay-policy=no-user-gesture-required")
-from PySide6.QtCore import QFile, QIODevice, QObject, Qt, QTimer, QUrl, Signal, Slot  # noqa: E402
+from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, Qt, QTimer, QUrl, Signal, Slot  # noqa: E402
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QIcon, QPainter  # noqa: E402
 from PySide6.QtWebChannel import QWebChannel  # noqa: E402
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings  # noqa: E402
 from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: E402
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget  # noqa: E402
 
+
+def _cocoa():
+    """Cocoa calls on winId() are only safe on Qt's cocoa platform: on offscreen/minimal/vnc it's a counter, not an
+    NSView pointer, and objc_msgSend on it segfaults."""
+    return MAC and QGuiApplication.platformName() == "cocoa"
+
 W, H = 340, 460
 WIDE = 470                   # while settings / history / memory are open the window widens to this
 CODE_SIDE = 100              # room either side for his terminal
 BAR_SIDE = 70                # docked at the top / bottom: room either side of the notch, so his glow fades out in it
+ROOM = max(WIDE - W, CODE_SIDE, BAR_SIDE)   # always kept on his left, so he never moves in the window (see set_wide)
 GLIDE = 0.26                 # seconds the window takes to glide into the notch and back (quick: it should feel snappy)
+MENU_LOOK = 150              # ms between looks for a full-screen app's menu bar sliding down over the notch (macOS)
+MENU_STEADY = 3              # looks in a row that must agree before he moves (a flick past the edge mustn't bob him)
+MENU_NEAR = 3.0              # s the looks stay quick after the mouse was last up by the top edge; after that, one…
+MENU_SLOW = 2.0              # …every this many s (it can stay down with the mouse away: a menu opened from it)
 BALL = (170, 165)            # where the ball's centre sits inside the window
-DATA = winsys.data_dir()
 POS_FILE, PORT_FILE = DATA / "pos.json", DATA / "window.port"
 
 # the page talks to us through window.webkit.messageHandlers.voidui.postMessage (WebKit's API on Linux); on Windows
@@ -77,9 +173,6 @@ def parse_combo(text):
     return mods, vk
 
 
-SELFTEST = False                                                         # --selftest / --selftest-bar run
-
-
 def log(msg):
     print(f"[void] {msg}", file=sys.stderr, flush=True)
 
@@ -108,11 +201,17 @@ class Remote(QObject):
     cmd = Signal(str)
 
 
+class ScreenWatch(QObject):
+    """macOS: the menu bar or the Dock may have come, gone or moved (from Cocoa's notifications)."""
+    changed = Signal()
+
+
 class Ghost(QWidget):
     """The notch left on the wall when he's pulled out of it: it melts back into the screen edge on its own (black,
     shrinking into the edge) while he goes wherever you take him. Click-through, never takes focus, gone in 0.3 s."""
     def __init__(self, x, y, w, h, edge):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowTransparentForInput)
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowTransparentForInput
+                         | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -150,16 +249,20 @@ class Ghost(QWidget):
 
 class VoidWindow(QWidget):
     def __init__(self, url):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)   # Tool: no taskbar button
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool   # Tool: no taskbar button
+                         | Qt.NoDropShadowWindowHint)   # (macOS: its shadow traces a black ring round his glow)
         self.setWindowTitle("Void")
         self.setWindowIcon(QIcon(str(APP / "static" / "icon.png")))
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.resize(W, H)
-        self.cur_w, self.wide_shift, self.want_panel, self.want_code = W, 0, False, False
+        self.cur_w, self.wide_shift, self.want_panel, self.want_code = W + ROOM, ROOM, False, False
+        self.box_l = 0                                                   # px of the room on his left in use (set_wide)
+        self.own_pos, self.unresize_due = None, False                    # his last spot at his own size (see resizeEvent)
+        self.resize(self.cur_w, H)
         self.hover, self.hpos, self.home, self.rects, self.through = False, None, None, None, None
         self.bar, self.bar_home = False, None                                # top bar: his eyes in a notch up top
         self.want_bar, self.glide_n = False, 0                               # (room for the notch's glow; current glide)
+        self.bar_inset = 0                                                   # px the notch hangs in from the screen edge
         self.shown = True
         self.save_t = QTimer(self, singleShot=True, interval=700, timeout=self._save_pos)   # save after you stop moving him
 
@@ -182,7 +285,7 @@ class VoidWindow(QWidget):
         f = QFile(":/qtwebchannel/qwebchannel.js")
         f.open(QIODevice.ReadOnly)
         sc = QWebEngineScript()
-        sc.setSourceCode(bytes(f.readAll()).decode() + SHIM)
+        sc.setSourceCode(bytes(f.readAll()).decode() + SHIM + f"window.voidLayoutX={self.wide_shift};")   # (from frame 1)
         sc.setInjectionPoint(QWebEngineScript.DocumentCreation)
         sc.setWorldId(QWebEngineScript.MainWorld)
         page.scripts().insert(sc)
@@ -190,16 +293,23 @@ class VoidWindow(QWidget):
             lambda origin, feat: page.setFeaturePermission(origin, feat, QWebEnginePage.PermissionDeniedByUser))
         page.renderProcessTerminated.connect(lambda *a: (log("page renderer stopped — reloading"),
                                                          QTimer.singleShot(400, v.reload)))
+        page.loadFinished.connect(lambda ok: self._js(f"window.voidRoom&&voidRoom({self.box_l})"))   # (a reload too)
         self.url = url
-        v.load(QUrl(self._authed_url()))
+        lay.activate()                     # (give the view its real size before the page first measures it: else it can
+        v.load(QUrl(self._authed_url()))  #  read Qt's 100x30 placeholder, scale him to a speck and never hear otherwise)
 
         self._load_pos()
         self.show()
+        if MAC:
+            self._mac_native()
+            self._watch_screens()
         self.remote = Remote()
         self.remote.cmd.connect(self._remote_cmd)
         threading.Thread(target=self._serve, daemon=True).start()
         self.base = url.split("?")[0]
+        self.quitting = False                                            # (stops the watchdog: no restart while quitting)
         threading.Thread(target=self._watch_server, daemon=True).start()
+        QApplication.instance().aboutToQuit.connect(self._about_to_quit)   # (macOS's own Quit too)
         self.ptt, self.ptt_held = None, False                           # the push-to-talk combo (the page sends it)
         threading.Thread(target=self._ptt_hook, daemon=True).start()
         QTimer.singleShot(1500, self._tell_page)
@@ -209,9 +319,13 @@ class VoidWindow(QWidget):
         self.look_t = 0.0
 
     # ---- position (remembered across runs)
+    def _screen(self):
+        """The screen his own strip is on (the room on his left may hang over onto the next one)."""
+        c = QPoint(self.x() + self.wide_shift + W // 2, self.y() + H // 2)
+        return QGuiApplication.screenAt(c) or QGuiApplication.primaryScreen()
+
     def _screen_rect(self):
-        scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
-        return scr.availableGeometry()                                    # minus the taskbar
+        return self._screen().availableGeometry()                         # minus the taskbar
 
     def _load_pos(self):
         try:
@@ -222,12 +336,53 @@ class VoidWindow(QWidget):
         except Exception:  # noqa: BLE001
             g = QGuiApplication.primaryScreen().availableGeometry()
             x, y = g.right() - W - 10, g.bottom() - H - 10                # default: bottom-right corner
-        self.move(x, y)
+        self.move(x - self.wide_shift, y)
 
     def moveEvent(self, ev):
+        if (self.width(), self.height()) == (self.cur_w, H):              # (not mid-way through someone else's resize)
+            self.own_pos = (self.x(), self.y())
         if not self.hover and not self.bar:
             self.save_t.start()
         super().moveEvent(ev)
+
+    # ---- only Void sizes his window (macOS tiling would squash him into half the screen)
+    def _mac_native(self):
+        """The Cocoa side of his window: on every Space, not resizable by you or by macOS, and not pushed down off the
+        top edge by macOS (docked up there, the notch hangs exactly as far in as the page says)."""
+        if not _cocoa():
+            return
+        if not self.internalWinId():                                     # (gone: don't make a new one just for this)
+            return
+        winsys.keep_on_all_spaces(self.winId())
+        winsys.no_resize(self.winId())
+        winsys.unconstrained(self.winId())
+
+    def event(self, ev):
+        # Qt puts Resizable back when the window's flags change (which needs a show after) or the NSWindow is rebuilt
+        # (a new id); a moment later, once the NSWindow is up
+        if MAC and ev.type() in (QEvent.Show, QEvent.WinIdChange):
+            QTimer.singleShot(0, self._mac_native)
+            self.through = None                                          # a new or reshown NSWindow takes clicks again: say it anew
+        return super().event(ev)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if MAC and (ev.size().width(), ev.size().height()) != (self.cur_w, H) and not self.unresize_due:
+            self.unresize_due = True                                      # every size of his own sets cur_w first
+            QTimer.singleShot(0, self._unresize)
+
+    def _unresize(self):
+        """Something else resized him (tiling got through anyway): straight back to his own size and spot, the page
+        at full size, before he's left a box in half the screen with his page scaled to fit it."""
+        self.unresize_due = False
+        w, h = self.width(), self.height()
+        if (w, h) == (self.cur_w, H):
+            return
+        x, y = self.own_pos or (self.x(), self.y())
+        log(f"window resized to {w}x{h} from outside — back to {self.cur_w}x{H}")
+        self.setGeometry(x, y, self.cur_w, H)
+        self._mac_native()
+        self._js(f"window.voidLayout&&voidLayout({self.wide_shift})")
 
     def _save_pos(self):
         try:
@@ -274,6 +429,89 @@ class VoidWindow(QWidget):
          "peek:hide": self.hide, "peek:show": self.show_me}.get(msg, lambda: None)()
 
     # ---- the bar: merged into a screen edge as a notch (the page draws it on the matching side of the window)
+    def _bar_area(self, scr):
+        """Where the bar docks on `scr`: the rect its window sits flush in, and how far in from each of its edges the
+        notch hangs. macOS: the whole screen, the notch just under the menu bar or beside the Dock only while they're
+        really there (AppKit, asked now: Qt's availableGeometry always keeps room for the menu bar, even over a
+        full-screen app, and isn't asked again when you change Space). Elsewhere: what the taskbar leaves, flush."""
+        if MAC:
+            g = scr.geometry()
+            ins = winsys.edge_insets_now(g.x(), g.y(), g.width(), g.height())
+            if ins:
+                return g, ins
+        return scr.availableGeometry(), {"top": 0, "bottom": 0, "left": 0, "right": 0}
+
+    @staticmethod
+    def _bar_xy(edge, g):
+        return ({"top": g.center().x() - W // 2, "bottom": g.center().x() - W // 2, "left": g.left(), "right": g.right() - W + 1}[edge],
+                {"top": g.top(), "bottom": g.bottom() - H + 1, "left": g.center().y() - H // 2, "right": g.center().y() - H // 2}[edge])
+
+    def _set_inset(self, px, glide):
+        """Tell the page how far in the notch hangs; glide: it oozes there (the window itself stays put)."""
+        if px != self.bar_inset or not glide:
+            self.bar_inset = px
+            self._js(f"window.voidBarInset&&voidBarInset({px},{'true' if glide else 'false'})")
+
+    def _watch_screens(self):
+        """macOS: look again where the notch should hang whenever the menu bar or the Dock may have changed — at once,
+        and once more when a Space switch has settled. Without Cocoa's notifications, a cheap look every 2 s."""
+        self.scr_watch = ScreenWatch()
+        self.scr_watch.changed.connect(lambda: (self._screens_changed(), QTimer.singleShot(700, self._screens_changed)))
+        if not winsys.watch_screens(self.scr_watch.changed.emit):
+            log("no screen notifications — checking the menu bar and the Dock every 2 s instead")
+            self.scr_poll = QTimer(self, interval=2000, timeout=self._screens_changed)
+            self.scr_poll.start()
+        self.menu_t = QTimer(self, interval=MENU_LOOK, timeout=self._menu_tick)
+        self.menu_room, self.menu_want, self.menu_n, self.menu_near, self.menu_look = 0, 0, 0, 0.0, 0.0
+
+    def _watch_menu(self, ins):
+        """Docked at the top of a screen with a menu bar: over a full-screen app it slides down over him when the
+        mouse reaches the top edge (and back up when it leaves), and nothing says so — no Space or screen change.
+        So look (_menu_tick) while he's up there."""
+        if self.bar == "top" and ins.get("menu", 0) > 0:
+            self.menu_room, self.menu_want, self.menu_n = ins["menu"], ins["top"], MENU_STEADY
+            self.menu_look = time.monotonic()
+            self.menu_t.start()
+        else:
+            self.menu_t.stop()
+
+    def _menu_tick(self):
+        """Is the menu bar down over him? Looked at every MENU_LOOK ms while the mouse is (or just was) up by the top
+        edge, the only thing that brings it down, else every MENU_SLOW s (a look is ~1 ms). Once MENU_STEADY looks
+        agree he drips down under it, or is slurped back up when it's gone."""
+        if self.bar != "top" or self.hover:
+            self.menu_t.stop()
+            return
+        scr = self._screen()
+        g, c, now = scr.geometry(), QCursor.pos(), time.monotonic()
+        if g.left() <= c.x() <= g.right() and g.top() <= c.y() < g.top() + self.menu_room + 8:
+            self.menu_near = now
+        if now - self.menu_near > MENU_NEAR and self.menu_n >= MENU_STEADY and now - self.menu_look < MENU_SLOW:
+            return
+        self.menu_look = now
+        want = self._bar_area(scr)[1]["top"]
+        self.menu_n = self.menu_n + 1 if want == self.menu_want else 1
+        self.menu_want = want
+        if self.menu_n >= MENU_STEADY:
+            self._set_inset(want, glide=True)
+
+    def _screens_changed(self):
+        if not self.bar or self.hover:
+            return
+        scr = self._screen()
+        g, ins = self._bar_area(scr)
+        x, y = self._bar_xy(self.bar, g)
+        if (x, y) != (self.x() + self.wide_shift, self.y()):            # (the screen itself changed)
+            self._glide_to(x, y)
+        self._set_inset(ins[self.bar], glide=True)
+        self._watch_menu(ins)
+
+    def _ghost_rect(self):
+        """The notch as it is on the wall (where it melts away when he's pulled out of it)."""
+        bx, y, e, i = self.x() + self.wide_shift, self.y(), self.bar, self.bar_inset
+        return {"top": (bx + 170 - 140, y + i, 280, 52), "bottom": (bx + 170 - 140, y + H - 52 - i, 280, 52),
+                "left": (bx + i, y + 230 - 115, 68, 230), "right": (bx + W - 68 - i, y + 230 - 115, 68, 230)}[e]
+
     def set_bar(self, edge, to=None, glide=True):
         """Dock on `edge` (top / bottom / left / right) of the screen he's on, or undock (None): back to the blob's
         own spot, or to `to` when he's pulled out by the mouse. Tells the page with voidDock()."""
@@ -282,12 +520,12 @@ class VoidWindow(QWidget):
             if not self.bar:
                 self.bar_home = (self.x() + self.wide_shift, self.y())
             self.bar = edge
-            scr = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
-            g = scr.availableGeometry()                                  # (the bottom edge sits above the taskbar)
-            x = {"top": g.center().x() - W // 2, "bottom": g.center().x() - W // 2,
-                 "left": g.left(), "right": g.right() - W + 1}[edge]
-            y = {"top": g.top(), "bottom": g.bottom() - H + 1,
-                 "left": g.center().y() - H // 2, "right": g.center().y() - H // 2}[edge]
+            scr = self._screen()
+            g, ins = self._bar_area(scr)                                 # (the bottom edge sits above the taskbar)
+            x, y = self._bar_xy(edge, g)
+            self._set_inset(ins[edge], glide=False)                      # (the page eases there as he docks)
+            if MAC:
+                self._watch_menu(ins)
             # glide into place while the page morphs, growing the window round the notch for its glow on the way
             # (no growing the window round the notch: it flickered; the notch's glow is sized to fit the window)
             self._glide_to(x, y)
@@ -312,37 +550,23 @@ class VoidWindow(QWidget):
         # (pulled out by the mouse: the page just pops him out — the notch's melt happens on the wall, in a Ghost)
         self._js("window.voidDock&&voidDock(%s,%s)" % (json.dumps(edge or ""), json.dumps("pull" if to and not edge else "")))
 
-    def _glide_to(self, bx, by, done=None, room=None):
+    def _glide_to(self, bx, by, done=None):
         """Glide his own 340px strip to (bx, by) over GLIDE seconds, easing out; a newer glide (or move) cancels this.
-        room: grow or shrink the window to this many px either side of the strip on the way, a little every frame —
-        in one jump the page lags a frame behind the window and he shows in the wrong place (a flicker)."""
+        (The window keeps its size: he never moves inside it, see set_wide.)"""
         self.glide_n += 1
         n, t0 = self.glide_n, time.monotonic()
         sbx, sby = self.x() + self.wide_shift, self.y()
-        manage = room is not None and not (self.want_panel or self.want_code)
-        L0 = self.wide_shift
-        L1 = room if manage else L0
 
         def step():
             if n != self.glide_n:
                 return
             k = min(1.0, (time.monotonic() - t0) / GLIDE)
             e = 1 - (1 - k) ** 3
-            x, y = int(round(sbx + (bx - sbx) * e)), int(round(sby + (by - sby) * e))
-            L = int(round(L0 + (L1 - L0) * e)) if manage else self.wide_shift
-            if L != self.wide_shift:
-                self.wide_shift, self.cur_w = L, W + 2 * L
-                self.setGeometry(x - L, y, self.cur_w, H)
-                self._js(f"window.voidLayout&&voidLayout({L})")
-            else:
-                self.move(x - L, y)
+            self.move(int(round(sbx + (bx - sbx) * e)) - self.wide_shift, int(round(sby + (by - sby) * e)))
             if k < 1:
                 QTimer.singleShot(8, step)
-            else:
-                if manage:
-                    self.want_bar = L1 > 0
-                if done:
-                    done()
+            elif done:
+                done()
         step()
 
     def _drag_done(self):
@@ -370,7 +594,8 @@ class VoidWindow(QWidget):
         t0 = time.monotonic()
 
         def check():
-            if not (ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000) or time.monotonic() - t0 > 60:
+            down = winsys.mouse_down() if MAC else ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000
+            if not down or time.monotonic() - t0 > 60:
                 t.stop()
                 if self._drag_t is t:
                     self._drag_t = None
@@ -384,10 +609,9 @@ class VoidWindow(QWidget):
         self.glide_n += 1                                                # grabbed: any glide stops right here
         if self.bar:                                                     # pulling the bar away: out pops the blob,
             c = QCursor.pos()                                            # under your mouse, still being dragged
-            bx, e = self.x() + self.wide_shift, self.bar                 # the notch stays on the wall and melts away
-            nx, ny, nw, nh = {"top": (bx + 170 - 140, self.y(), 280, 52), "bottom": (bx + 170 - 140, self.y() + H - 52, 280, 52),
-                              "left": (bx, self.y() + 230 - 115, 68, 230), "right": (bx + W - 68, self.y() + 230 - 115, 68, 230)}[e]
-            self.set_wide(False, "bar")                                  # (first: it changes wide_shift)
+            e = self.bar                                                 # the notch stays on the wall and melts away
+            nx, ny, nw, nh = self._ghost_rect()
+            self.set_wide(False, "bar")                                  # (first: it may resize him)
             self.set_bar(None, to=(c.x() - BALL[0] - self.wide_shift, c.y() - BALL[1]))
             # (a moment later: a new window appearing right as the drag starts can upset the drag)
             QTimer.singleShot(30, lambda: setattr(self, "ghost", Ghost(nx, ny, nw, nh, e)))
@@ -415,6 +639,10 @@ class VoidWindow(QWidget):
         if on == self.through:
             return
         self.through = on
+        if MAC:
+            if _cocoa():
+                winsys.set_click_through(self.winId(), on)
+            return
         hwnd = int(self.winId())
         u = ctypes.windll.user32
         ex = u.GetWindowLongW(hwnd, -20)                                  # GWL_EXSTYLE
@@ -425,28 +653,40 @@ class VoidWindow(QWidget):
         if self.hover:
             self._follow()
             return
-        if self.rects is None or not self.isVisible():
+        if not self.isVisible():
             self._set_through(False)
             return
         p = QCursor.pos() - self.pos()
+        if self.rects is None:                                           # all of him takes clicks, not the unused room
+            self._set_through(p.x() < self.wide_shift - self.box_l)
+            return
         solid = any(x <= p.x() < x + w and y <= p.y() < y + h for x, y, w, h in self.rects)
         self._set_through(not solid)
 
     # ---- show / hide / commands
     def show_me(self):
         self.shown = True
+        if self.hover and not self.isVisible():
+            self.vel, self.last = [0.0, 0.0], None                       # (no stale speed from before he was hidden)
+            self._follow()                                             # (on the pointer before he appears: no jump)
         self.show()
         self.raise_()
+        if not self.poll.isActive():                                     # (stopped while hidden: hide_me)
+            self.poll.start()
+        self._poll_mouse()                                               # up to date at once, not a tick later
         self._js("window.voidShown&&voidShown()")
 
     def hide_me(self):
         self.shown = False
         self._js("window.voidHidden&&voidHidden()")
         self.hide()
+        self.poll.stop()                                                 # no wakeups while he's away (show_me restarts it)
+        if not self.hover:
+            self._set_through(False)                                     # (what the poll did while he was hidden)
 
     def _remote_cmd(self, c):
         if c == "quit":
-            QApplication.quit()
+            quit_app(self)
         elif c == "toggle":
             if self.hover:
                 self._js("window.voidCmd&&voidCmd('home')")
@@ -490,12 +730,29 @@ class VoidWindow(QWidget):
         except Exception:  # noqa: BLE001
             return False
 
+    def _start_server(self):
+        """Start the server in its own process group, with a run id of ours, and record it (see Started)."""
+        import secrets
+        import subprocess
+        rid = secrets.token_hex(8)
+        with open(DATA / "server.log", "ab") as out:
+            p = subprocess.Popen([sys.executable, str(APP / "server.py")], stdout=out, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, start_new_session=True,
+                                 env={**os.environ, "VOID_RUN_ID": rid})
+        Started.record(p.pid, rid)
+
+    def _about_to_quit(self):
+        self.quitting = True
+        Started.stop()
+
     def _watch_server(self):
         """If the server stops (a crash), start it again instead of leaving him deaf with "failed to fetch". The page
         reconnects by itself: a new server means a new token, and it reloads when it sees "forbidden"."""
         misses, last = 0, 0.0
-        while True:
+        while not self.quitting:
             time.sleep(3)
+            if self.quitting:
+                return
             if self._server_up():
                 misses = 0
                 continue
@@ -504,8 +761,11 @@ class VoidWindow(QWidget):
                 last = time.monotonic()
                 log("the server isn't answering — starting it again")
                 try:
-                    import launch_win
-                    launch_win._start("server", [str(APP / "server.py")])
+                    if MAC:
+                        self._start_server()
+                    else:
+                        import launch_win
+                        launch_win._start("server", [str(APP / "server.py")])
                 except Exception as e:  # noqa: BLE001
                     log(f"couldn't restart the server: {e}")
 
@@ -513,6 +773,9 @@ class VoidWindow(QWidget):
         """The push-to-talk hotkey, anywhere in Windows: a low-level keyboard hook (RegisterHotKey can't tell when a
         key is let go). It only compares each key with the combo; everything else passes straight through untouched,
         and nothing is recorded. The combo's own key presses are kept from the app you're in."""
+        if MAC:                                                          # (needs Input Monitoring: not yet)
+            log("push-to-talk hotkey: not on macOS yet — hold Space in his window, or bind `void listen` to a key")
+            return
         import ctypes.wintypes as wt
         user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
         LRESULT = ctypes.c_ssize_t
@@ -581,6 +844,9 @@ class VoidWindow(QWidget):
 
     # ---- widening for panels / his terminal
     def set_wide(self, on, kind="panel"):
+        """Make room: panels on his left, his terminal either side. The room on his left is always there and the page is
+        told how much of it to use (voidRoom): moving the window and him in it at once, the page a frame behind showed
+        him 100 px off for a frame. Only the right side grows and shrinks (the page is drawn from the left)."""
         if kind == "panel":
             self.want_panel = on
         elif kind == "bar":
@@ -594,11 +860,12 @@ class VoidWindow(QWidget):
         base = self.x() + self.wide_shift                                 # where his own 340px strip starts
         g = self._screen_rect()
         L, R = min(L, max(0, base - g.left())), min(R, max(0, g.right() - base - W))
-        if W + L + R == self.cur_w and L == self.wide_shift:
-            return
-        self.wide_shift, self.cur_w = L, W + L + R
-        self.setGeometry(base - L, self.y(), self.cur_w, H)
-        self._js(f"window.voidLayout&&voidLayout({L})")
+        if L != self.box_l:
+            self.box_l = L
+            self._js(f"window.voidRoom&&voidRoom({L})")
+        if self.wide_shift + W + R != self.cur_w:
+            self.cur_w = self.wide_shift + W + R
+            self.resize(self.cur_w, H)
 
     # ---- hover mode: he is the mouse pointer
     def set_hover(self, on):
@@ -606,7 +873,7 @@ class VoidWindow(QWidget):
             return
         if on and self.bar:                                              # out of the notch first (it mustn't fly around)
             self.set_bar(None, glide=False)                              # (at once: the cursor-following starts here)
-        if on and self.cur_w > W:
+        if on and (self.box_l or self.cur_w > self.wide_shift + W):
             self.want_code = False
             self.set_wide(False)
         self.hover = on
@@ -626,7 +893,7 @@ class VoidWindow(QWidget):
             self.vel = [self.vel[0] * 0.8 + (c.x() - self.last[0]) / dt * 0.2,
                         self.vel[1] * 0.8 + (c.y() - self.last[1]) / dt * 0.2]
         self.last = (c.x(), c.y(), now)
-        self.hpos = [c.x() - BALL[0], c.y() - BALL[1]]                   # right on the pointer: he *is* the cursor
+        self.hpos = [c.x() - BALL[0] - self.wide_shift, c.y() - BALL[1]]  # right on the pointer: he *is* the cursor
         if (self.x(), self.y()) != (self.hpos[0], self.hpos[1]):
             self.move(self.hpos[0], self.hpos[1])
         if now - self.look_t >= 0.033:                                    # his eyes only need ~30 updates a second
@@ -650,6 +917,34 @@ class VoidWindow(QWidget):
         step()
 
 
+def quit_app(win):
+    """Quit the way the tray's Quit does: stop the watchdog, then our own server (if it is ours), then Qt."""
+    win.quitting = True
+    Started.stop()
+    QApplication.quit()
+
+
+def install_sigterm_handler(win):
+    """SIGTERM (a crash handler, launchctl stop) quits the same way, since the server is in a group of its own and
+    would otherwise outlive him. Qt needs the interpreter woken now and then to run the handler: see main()."""
+    import signal
+    signal.signal(signal.SIGTERM, lambda signum, frame: quit_app(win))
+
+
+def name_qt_app(app):
+    """Qt names itself after the script (window_win.py) and, on macOS, writes its own cache (the Qt Quick pipeline cache)
+    to ~/Library/Caches/<that name> whatever HOME says. Call him Void and send that cache to a folder of his own under
+    cache_dir(). The page keeps QtWebEngine's default off-the-record profile (nothing of it is stored)."""
+    app.setApplicationName("Void")
+    folder = winsys.cache_dir() / "Void"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    for var in ("QSG_RHI_PIPELINE_CACHE_SAVE", "QSG_RHI_PIPELINE_CACHE_LOAD"):
+        os.environ.setdefault(var, str(folder / "qtpipelinecache"))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -660,6 +955,7 @@ def main():
     if len(sys.argv) > 3 and sys.argv[2] == "--selftest":
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] += " --disable-gpu"
         app = QApplication(sys.argv[:1])
+        name_qt_app(app)
         win = VoidWindow(url)
         out = sys.argv[3]
 
@@ -672,13 +968,14 @@ def main():
     if len(sys.argv) > 4 and sys.argv[2] == "--selftest-bar":            # dock on an edge, report where, save a picture
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] += " --disable-gpu"
         app = QApplication(sys.argv[:1])
+        name_qt_app(app)
         win = VoidWindow(url)
         edge, out = sys.argv[3], sys.argv[4]
 
         def report(cls):
-            g = (QGuiApplication.screenAt(win.frameGeometry().center()) or QGuiApplication.primaryScreen()).availableGeometry()
-            win.grab().save(out)
-            print(f"selftest-bar: {edge} x={win.x()} y={win.y()} w={win.width()} h={win.height()} "
+            g = win._screen_rect()
+            win.grab().save(out)                                         # (x, w: his own, not the room on his left)
+            print(f"selftest-bar: {edge} x={win.x() + win.wide_shift} y={win.y()} w={win.width() - win.wide_shift} h={win.height()} "
                   f"area={g.x()},{g.y()},{g.width()},{g.height()} page={cls}", flush=True)
             app.quit()
         QTimer.singleShot(10000, lambda: win.set_bar(edge))              # (slow test machines: let the page load)
@@ -691,10 +988,17 @@ def main():
         return
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv[:1])
+    name_qt_app(app)
     app.setQuitOnLastWindowClosed(False)
+    if MAC:
+        winsys.no_dock_icon()
     win = VoidWindow(url)
     if cmd in ("listen", "look", "live", "hover", "hover-on"):
         QTimer.singleShot(1800, lambda: win._remote_cmd(cmd))         # first launch: let the page load, then do it
+    if sys.platform != "win32":
+        install_sigterm_handler(win)
+        wake = QTimer(app, interval=300, timeout=lambda: None)          # (lets Python see the signal while Qt runs)
+        wake.start()
     sys.exit(app.exec())
 
 
