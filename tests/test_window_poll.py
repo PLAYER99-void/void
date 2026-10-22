@@ -35,6 +35,21 @@ def tearDownModule():
         _data.cleanup()
 
 
+class FakeSys:
+    """Stands in for winsys / macsys: records every call and does nothing, so no Cocoa, X11 or Win32 call is made."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+
+        def record(*args, **kw):
+            self.calls.append((name, *args))
+        return record
+
+
 @unittest.skipUnless(window_win, "PySide6 (and window_win) only")
 class Poll(unittest.TestCase):
     @classmethod
@@ -42,6 +57,9 @@ class Poll(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        self.sys_calls = FakeSys()
+        self.saved = window_win.winsys
+        window_win.winsys = self.sys_calls
         calls = self.calls = []                                          # ("poll" | "follow", visible at the time)
         throughs = self.throughs = []
 
@@ -90,6 +108,7 @@ class Poll(unittest.TestCase):
         self.win.close()
         self.win.deleteLater()
         self.settle()
+        window_win.winsys = self.saved
 
     def settle(self):
         for _ in range(5):
