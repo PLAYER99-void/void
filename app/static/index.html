@@ -668,13 +668,14 @@ function staleToken(){                       // the server restarted with a new 
   try{ sessionStorage.setItem('void-reload',Date.now()); sessionStorage.removeItem('void-t'); }catch(e){}
   if(!native('reauth')) tick('Void restarted — close this window and run “void” again',true);
 }
-const native=msg=>{ try{ window.webkit.messageHandlers.voidui.postMessage(msg); if(msg==='show') faceGo(); return true; }catch(e){ return false; } };
+const native=msg=>{ try{ window.webkit.messageHandlers.voidui.postMessage(msg); if(msg==='show'){ faceGo(); timersGo(true); } return true; }catch(e){ return false; } };
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 let workAmt=0, workRot=0, workWhat='', workT0=0;
 let busy=false, toolMood=null, muted=false, info={}, lastActive=performance.now(), hiddenNow=false;
 let faceRaf=0, faceOn=false;   // his face's frame loop: on, and its one pending frame (off while hidden: no frames at all)
+let pageT=null;                // his page timers (timersGo), or null while hidden
 let transient=null, transientUntil=0, errorUntil=0;
 let rec=null, transcribing=false, micRaw=0, follow=false, hearRaw=0;   // follow: the no-"hey Void" window after he talks
 try{ muted=localStorage.getItem('void.muted')==='1'; }catch(e){}
@@ -2488,7 +2489,6 @@ function convoCheck(){
   b.classList.toggle('hearing',hearing); b.classList.toggle('speaking',!!playing);
   if(hearing) $('#barPill').style.setProperty('--lv',Math.min(1,Math.max(micRaw||0,hearRaw||0)).toFixed(2));
 }
-setInterval(convoCheck,50);
 window.voidBarUnsupported=()=>{ tick('the top bar needs layer-shell or X11 on this desktop',true); setSetting({presence:'orb'}); info.presence='orb'; setBarClass(''); };
 window.voidHoverUnsupported=()=>{ tick('hover mode needs Hyprland or X11 on this desktop',true); setSetting({hover:false}); setHoverClass(false); };
 window.voidLook=(dx,dy)=>{ lastMouse=performance.now(); const m=mood(lastMouse);
@@ -2762,13 +2762,20 @@ async function refresh(){ try{ await tokenReady; const r=await fetch('/api/state
   info=j; showInfo(); announceUpdate(); miniSync(j.subagents); }catch(e){} }
 function toggleMute(){ muted=!muted; try{localStorage.setItem('void.muted',muted?'1':'0');}catch(e){} if(muted) shush(); tick(muted?'voice off':'voice on'); if(setEl.classList.contains('on')) renderSettings(); }
 
+// his page timers: the notch halo (convoCheck), the click region, the /api/state poll — same rates while he's shown,
+// none while hidden by the shell; shown again: one of each, and (now) the halo and region up to date at once, not a tick later
+function timersGo(now){ if(pageT) return;
+  pageT=[setInterval(convoCheck,50), setInterval(()=>sendRegion(false),400), setInterval(()=>{ if(!busy) refresh(); },15000)];
+  if(now){ convoCheck(); sendRegion(false); } }
+function timersStop(){ if(pageT) pageT.forEach(clearInterval); pageT=null; }
+
 // hidden (Esc, hide, closing him) = fully off: he stops talking and the server closes the mic — no "hey Void" until
 // he's shown again (Start menu, your hotkey, or `void`)
-window.voidHidden=()=>{ hiddenNow=true; faceStop(); endListening(); menu(false); hideAsk(); shush(); post('/api/sleep',{on:true}).catch(()=>{}); };
-window.voidShown=()=>{ hiddenNow=false; faceGo(); post('/api/sleep',{on:false}).catch(()=>{}); entrance(); wake(); refresh().then(()=>{ syncEye(true); if(pendingAppr||busy) return;
+window.voidHidden=()=>{ hiddenNow=true; faceStop(); timersStop(); endListening(); menu(false); hideAsk(); shush(); post('/api/sleep',{on:true}).catch(()=>{}); };
+window.voidShown=()=>{ hiddenNow=false; faceGo(); timersGo(true); post('/api/sleep',{on:false}).catch(()=>{}); entrance(); wake(); refresh().then(()=>{ syncEye(true); if(pendingAppr||busy) return;
   if(info.listen_on_show&&!info.hover) setTimeout(()=>startRec('auto'),450); else setTimeout(()=>poke('wink',900),350); }); };
 async function comeBack(){ if(!info.hover) return; await toggleHover(false); await sleep(700); }
-window.voidCmd=async c=>{ hiddenNow=false; faceSync();
+window.voidCmd=async c=>{ hiddenNow=false; faceSync(); timersGo(true);
   if(c==='home'){ return comeBack(); }
   if(c==='listen'){ await comeBack(); if(rec) stopRec(false); else startRec('auto'); }
   else if(c==='look'){ await comeBack(); shoot('window').then(j=>{ if(j) startRec('auto'); }); }
@@ -2822,7 +2829,6 @@ function sendRegion(force){
   if(MINIS.size) miniRegion(rs,add,inBar);
   const s=JSON.stringify(rs); if(!force&&s===lastRegion) return; lastRegion=s; native('region:'+s);
 }
-setInterval(()=>sendRegion(false),400);
 // panels slide in — re-measure once they've landed so their clickable area matches what you see
 addEventListener('transitionend',e=>{ if(e.target.matches&&e.target.matches('#menu,.pn,#appr,#ask,#pwbox')) sendRegion(true); });
 
@@ -3040,7 +3046,7 @@ refresh().then(()=>{
 });
 applyLook(LOOK_DEFAULT);
 events();
-setInterval(()=>{ if(!busy) refresh(); },15000);
+timersGo();
 </script>
 </body>
 </html>
