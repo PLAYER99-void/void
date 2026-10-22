@@ -449,6 +449,11 @@ def clipboard(out):
     return "text", text if ok else ""
 
 
+def set_clipboard(text):
+    """Put text on the clipboard (works when the window isn't focused, unlike the web clipboard) → ok."""
+    return ps("Set-Clipboard -Value " + _q(text))[0]
+
+
 # ---------------------------------------------------------------- notifications
 def notify(title, body):
     """A Windows notification (toast), shown through PowerShell so nothing extra needs installing."""

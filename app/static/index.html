@@ -2187,7 +2187,11 @@ async function openPanel(kind){
   }
   sendRegion(true);
 }
-const copy=async t=>{ try{ await navigator.clipboard.writeText(t); tick('copied'); sfx('ok'); }catch(err){ tick("couldn't copy",true); } };
+const putClip=async t=>{                           // the web clipboard refuses when the window isn't focused → let the server copy
+  try{ await navigator.clipboard.writeText(t); return true; }catch(err){}
+  try{ return !!(await (await post('/api/copy',{text:t})).json()).ok; }catch(err){ return false; }
+};
+const copy=async t=>{ if(await putClip(t)){ tick('copied'); sfx('ok'); } else tick("couldn't copy",true); };
 // a small, safe markdown → HTML for answers (code blocks get a copy button)
 function md(src){
   const out=[]; let i=0; const parts=String(src||'').split(/```/);
@@ -2213,7 +2217,7 @@ panelEl.addEventListener('click',async e=>{
     if(e.target.closest('#hClear')){ await post('/api/history',{op:'clear'}); return openPanel('history'); }
     const it=e.target.closest('.item'); if(!it) return; const h=body._items[+it.dataset.i]; const b=e.target.closest('[data-h]');
     if(!b){ it.classList.toggle('open'); return; }
-    if(b.dataset.h==='copy'){ try{ await navigator.clipboard.writeText(h.him||''); tick('copied'); }catch(err){ tick("couldn't copy",true); } }
+    if(b.dataset.h==='copy'){ const ok=await putClip(h.him||''); tick(ok?'copied':"couldn't copy",!ok); }
     if(b.dataset.h==='again'){ closePanels(); send(h.you); }
     if(b.dataset.h==='cont'){ const r=await post('/api/resume',{session:h.session,cwd:h.cwd}); const j=await r.json();
       if(j.error) return tick(j.error,true); info=j; showInfo(); closePanels(); tick('↩ back in that chat · '+j.cwd_display); poke('happy',900); capShow(); setYou(h.you); himSet(h.him); }
@@ -2647,8 +2651,7 @@ async function copyDiagnostics(){
   try{
     const j=await (await post('/api/diagnostics')).json(), pre=$('#diagPrev');
     pre.textContent=j.text; pre.hidden=false;
-    let ok=false;
-    try{ await navigator.clipboard.writeText(j.text); ok=true; }catch(e){}
+    let ok=await putClip(j.text);
     if(!ok){ const r=document.createRange(), s=getSelection(); r.selectNodeContents(pre); s.removeAllRanges(); s.addRange(r);
       try{ ok=document.execCommand('copy'); }catch(e){} s.removeAllRanges(); }
     tick(ok?'copied — paste it into a GitHub issue':'select the report below and copy it',!ok);

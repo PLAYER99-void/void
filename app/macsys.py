@@ -154,6 +154,15 @@ def clipboard(out):
     return "text", text if ok else ""
 
 
+def set_clipboard(text):
+    """Put text on the clipboard (works when the window isn't focused, unlike the web clipboard) → ok."""
+    try:
+        return subprocess.run(["pbcopy"], input=text, text=True, encoding="utf-8", timeout=10,
+                              env={**os.environ, "LANG": "en_US.UTF-8"}).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 # ---------------------------------------------------------------- notifications
 def notify(title, body):
     threading.Thread(target=osa, args=("display notification (item 2 of argv) with title (item 1 of argv)",

@@ -848,6 +848,22 @@ def capture(kind):
     raise RuntimeError("unknown capture")
 
 
+def set_clipboard(text):
+    """Put text on the clipboard from here, for when the web clipboard refuses (the window isn't focused) → ok."""
+    if OSYS:
+        return OSYS.set_clipboard(text)
+    wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    cmd = (["wl-copy"] if wayland and shutil.which("wl-copy") else ["xclip", "-selection", "clipboard", "-i"]
+           if shutil.which("xclip") else ["xsel", "-b", "-i"] if shutil.which("xsel") else None)
+    if not cmd:
+        return False
+    try:                                       # (these leave a helper running to hold the text: don't wait on its pipes)
+        return subprocess.run(cmd, input=text.encode(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def attach_prompt(atts):
     parts = []
     for a in atts or []:
@@ -2981,6 +2997,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/stop":
                 stop_proc()
                 return self._json({"ok": True})
+            if p == "/api/copy":
+                return self._json({"ok": set_clipboard(str(json.loads(self._body() or b"{}").get("text") or ""))})
             if p == "/api/diagnostics":
                 return self._json({"text": diagnostics()})
             if p == "/api/report":                 # opens GitHub's "new issue" page — only ever this one address
