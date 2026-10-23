@@ -2,7 +2,7 @@
 # Void from the latest main branch. After installing, each user runs `void setup` once (their voice + speech models).
 pkgname=void-claude-git
 _src=void
-pkgver=1.6.2.r0.g0000000
+pkgver=1.6.3.r0.g0000000
 pkgrel=1
 pkgdesc='Voice-first desktop companion for Claude Code: say "hey Void" and a little orb (or a notch on your screen edge) does the work'
 arch=('any')

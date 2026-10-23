@@ -65,6 +65,7 @@ class Stream:
          "end"     – that message's result: it's answered
          "bus"     – for the page at any time (subagents, follow-ups)
          "session" – the chat's session id
+         "ctx"     – how full the chat is: {"usage": the main agent's last request} or {"window": its context size}
     oneshot: the old one-process-per-message way. There Claude Code holds every result back until it exits, so a
     turn's origin comes too late to sort anything by: it all streams to your message, as it always did."""
 
@@ -140,6 +141,9 @@ class Stream:
             elif ev.get("type") == "message_start":
                 self._main(out, {"t": "break"})
         elif ty == "assistant":
+            usage = (o.get("message") or {}).get("usage")
+            if isinstance(usage, dict):
+                out.append(("ctx", {"usage": usage}))
             for b in (o.get("message") or {}).get("content") or []:
                 if not isinstance(b, dict):
                     continue
@@ -236,6 +240,10 @@ class Stream:
     def _result(self, o, out):
         if o.get("session_id"):
             out.append(("session", o["session_id"]))
+        win = max([int(m.get("contextWindow") or 0) for m in (o.get("modelUsage") or {}).values()
+                   if isinstance(m, dict)] or [0])
+        if win:
+            out.append(("ctx", {"window": win}))
         held, self.turn, self.streamed = self.turn, [], False
         taken, self.taken = self.taken, False
         origin = o.get("origin") or {}
@@ -324,8 +332,9 @@ class Brain:
     IDLE_S = 600                                   # nothing to do for this long → let the process go
 
     def __init__(self, publish, on_session=None, describe=None, popen=subprocess.Popen, killer=kill_tree,
-                 clock=time.monotonic, watchdog=True):
+                 clock=time.monotonic, watchdog=True, on_ctx=None):
         self.publish, self.on_session = publish, on_session or (lambda sid: None)
+        self.on_ctx = on_ctx or (lambda ev: None)
         self.describe, self.popen, self.killer, self.clock = describe, popen, killer, clock
         self.lock = threading.RLock()
         self.proc = None
@@ -513,6 +522,8 @@ class Brain:
             if dest == "session":
                 self.session = ev
                 self.on_session(ev)
+            elif dest == "ctx":
+                self.on_ctx(ev)
             elif dest == "bus":
                 self.publish(**ev)
             elif self.cur is not None:

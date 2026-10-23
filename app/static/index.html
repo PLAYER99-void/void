@@ -147,6 +147,16 @@ body.bar #code .l.out{color:#b5b5b5}
 #cap.off,body.appr #cap,body.pnl #cap{opacity:0;transform:translateY(6px)}
 #you{font-size:12px;color:var(--dim);text-shadow:0 1px 2px #000,0 0 5px #0009;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #you.pop{animation:wIn .7s var(--ease) both}
+/* "Show everything I said": the last few lines of it, wrapped, instead of one cut-off line */
+body.fulltext #cap{top:248px;height:148px}      /* same bottom edge as before; it grows up into the gap under his body, not down */
+body.fulltext #you{white-space:normal;max-height:4.3em;line-height:1.4;font-size:12.5px;color:#c4c4c4;display:flex;flex-direction:column;justify-content:flex-end;text-overflow:clip;margin-bottom:2px}
+.row .t.sub{margin-top:14px;padding-top:12px;border-top:1px solid #1c1c1c}
+.row .t .pct{margin-left:auto;font:600 11.5px var(--mono);color:#aaa}
+.ctxbar{height:14px;border-radius:7px;background:#ffffff1a;overflow:hidden;margin:8px 0 8px}
+.ctxbar i{display:block;height:100%;width:0;background:var(--acc);transition:width .6s var(--ease),background .6s}
+.ctxbar.warn i{background:#e89a2c} .ctxbar.full i{background:#d8453a}
+input[type=range]{accent-color:var(--acc)}
+#ctxTxt{font-size:13px;font-weight:600;color:#ddd} #ctxTxt.warn{color:#e89a2c} #ctxTxt.full{color:#ef6a60}
 #him{font-size:14.5px;font-weight:500;max-height:4.5em;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;width:100%}
 #him.err{color:#ff8a8a}
 #him .ln{display:block}
@@ -582,6 +592,7 @@ body.hover #miniTip{display:none}
         <label class="tg"><input type="checkbox" id="wakeSw"><span class="sw"></span><span class="l">“Hey Void” wake word<small>Listens for his name. Nothing leaves your computer.</small></span></label>
         <label class="tg"><input type="checkbox" id="bargeSw"><span class="sw"></span><span class="l">Interrupt him by voice<small>Say “stop” (or “hey Void”) while he's talking.</small></span></label>
         <label class="tg"><input type="checkbox" id="listenShowSw"><span class="sw"></span><span class="l">Listen as soon as he pops up</span></label>
+        <label class="tg"><input type="checkbox" id="fullSw"><span class="sw"></span><span class="l">Show everything I said<small>The end of your words, wrapped over a few lines, instead of one cut-off line.</small></span></label>
         <label class="tg"><input type="checkbox" id="sfxSw"><span class="sw"></span><span class="l">Sound effects<small>Little blips when he wakes, opens his menu or finishes.</small></span></label>
       </div>
       <div class="row"><div class="t">Push-to-talk hotkey</div><div class="h" id="pttHelp">Hold it anywhere, even in another app, to talk. Let go to send.</div>
@@ -592,7 +603,18 @@ body.hover #miniTip{display:none}
     <!-- ================= BRAIN ================= -->
     <div class="tab" data-tab="brain">
       <div class="row"><div class="t">How much can he do on his own?</div><div class="opts" id="trustOpts"></div></div>
-      <div class="row"><div class="t">Claude model</div><div class="h">Auto uses the fast model for quick questions and the full one for real work.</div><div class="seg" id="modelChips"></div></div>
+      <div class="row"><div class="t">Claude model</div><div class="h">Auto uses the fast model for quick questions and the full one for real work.</div><div class="seg" id="modelChips"></div>
+        <div class="t sub">Thinking effort</div><div class="h">Higher thinks harder on real work, but is slower and uses more of your plan. “default” leaves it to Claude.</div><div class="seg" id="effortChips"></div>
+        <label class="tg" style="margin-top:12px;padding-top:12px;border-top:1px solid #1c1c1c"><input type="checkbox" id="leanSw"><span class="sw"></span><span class="l">Light mode<small>Only the tools he needs (files, commands, web), not your other skills or plugins. Every chat starts about half the size, so it uses far less of your plan.</small></span></label>
+        <div class="t sub">Stop when usage hits this amount<span class="pct" id="costVal"></span></div>
+        <div class="h">If one request costs this much, he stops it. All the way left = no limit.</div>
+        <input type="range" id="costIn" min="0" max="20" step="0.5" style="width:100%"></div>
+      <div class="row"><div class="t">Chat size<span class="pct" id="ctxPct"></span></div>
+        <div class="ctxbar" id="ctxBar"><i></i></div>
+        <div class="h" id="ctxTxt"></div>
+        <div class="h" id="recallTxt" style="margin-top:-3px"></div>
+        <label class="tg"><input type="checkbox" id="compactSw"><span class="sw"></span><span class="l">Tidy up automatically<small>At about 70% full he writes himself a short note and carries on in a fresh chat, so a long session can't quietly eat your usage.</small></span></label>
+        <div class="bar" style="margin-top:9px"><button class="btn sm" id="ctxTidy">Tidy up now</button><button class="btn sm" id="ctxNew">New chat</button></div></div>
       <div class="row"><div class="t">Projects</div><div class="h">Say “switch to my <i>name</i>” to jump there. Add by voice: “remember my blog is in ~/code/blog”.</div>
         <div id="projList"></div>
         <div class="bar" style="margin-top:7px"><input type="text" id="projName" placeholder="name" style="flex:1 1 80px;min-width:0"><input type="text" id="projPath" placeholder="~/code/app" style="flex:2 1 120px;min-width:0"><button class="btn pri sm" id="projAdd">add</button></div></div>
@@ -607,13 +629,13 @@ body.hover #miniTip{display:none}
         <label class="tg"><input type="checkbox" id="popupSw"><span class="sw"></span><span class="l">Pop back up when it's done</span></label>
         <label class="tg"><input type="checkbox" id="updSw"><span class="sw"></span><span class="l">Check for updates<small>Asks GitHub for the latest version when he starts, every few hours and when you open Settings. Nothing about you is sent.</small></span></label>
       </div>
+      <div class="row"><div class="t">Memory &amp; history</div><div class="h">Say “remember …” and he keeps it for every future chat.</div>
+        <div class="bar"><button class="btn" data-open="memory">🧠 Memory <i id="memCount"></i></button><button class="btn" data-open="history">🕘 History</button></div></div>
       <div class="row"><div class="t">Void <span id="verTxt"></span></div><div class="h" id="updTxt"></div>
         <div class="bar"><button class="btn" id="updNow" hidden>⬇ Update now</button><button class="btn" id="updCheck">Check now</button></div></div>
       <div class="row"><div class="t">Need help?</div><div class="h">Copies a report (versions, mic, voice, the end of his log) to paste when you ask for help. Nothing is sent; your name and folders are blanked out.</div>
         <div class="bar"><button class="btn" id="diagCopy">📋 Copy diagnostics</button><button class="btn" id="diagReport">Report a problem</button></div>
         <pre id="diagPrev" hidden style="max-height:160px;overflow:auto;font-size:10.5px;white-space:pre-wrap;user-select:text;margin:8px 0 0"></pre></div>
-      <div class="row"><div class="t">Memory &amp; history</div><div class="h">Say “remember …” and he keeps it for every future chat.</div>
-        <div class="bar"><button class="btn" data-open="memory">🧠 Memory <i id="memCount"></i></button><button class="btn" data-open="history">🕘 History</button></div></div>
       <div class="row"><div class="t">Things you can just say</div>
         <div class="keys"><kbd>volume up</kbd><span>also mute, set volume to 40</span><kbd>pause / next song</kbd><span>needs playerctl</span><kbd>timer 10 minutes</kbd><span>“remind me at 5 to…”</span><kbd>what time is it</kbd><span>and the date</span><kbd>open firefox</kbd><span>any app</span><kbd>lock my screen</kbd><span></span><kbd>switch to my app</kbd><span>your projects</span></div></div>
       <div class="row"><div class="t">Hotkeys</div><div class="h">Bind in your desktop, e.g. Hyprland <code>bind = SUPER, A, exec, void listen</code></div>
@@ -1643,13 +1665,14 @@ function ac(){ if(!actx) actx=new (window.AudioContext||window.webkitAudioContex
 // enqueue(text, {cap:true}) also puts the words on screen, one by one, as he says them
 // When the server can play audio itself (info.voice_native), his voice doesn't go through this page at all — see
 // Speaker in server.py. We just say what to speak; the server tells us when each sentence actually starts.
-const spkMap=new Map(); let spkSeq=0, spkLv=[], spkGuard=0, sayChain=Promise.resolve();
+const spkMap=new Map(); let spkSeq=0, spkLv=[], spkGuard=0, sayChain=Promise.resolve(), sayEpoch=0;   // sayEpoch: bumped when you cut him off
 function enqueue(text,o={}){
   text=(text||'').trim();
   if(muted||!/[a-z0-9]/i.test(text)){ if(o.cap) karaNow(o.cap===true?text:o.cap,o.fresh); return; }
   if(info.voice_native){ const id=++spkSeq; spkMap.set(id,{cap:o.cap?(o.cap===true?text:o.cap):'',fresh:!!o.fresh});
     playing=true; spkGuard=performance.now();
-    sayChain=sayChain.then(()=>post('/api/say',{text,id})).catch(()=>{ const it=spkMap.get(id); spkMap.delete(id); if(it&&it.cap) karaNow(it.cap,it.fresh); quietNative(); });   // one after another: keeps them in order
+    const ep=sayEpoch;      // sentences still queued when you cut him off must never be sent (or played) afterwards
+    sayChain=sayChain.then(()=>ep===sayEpoch?post('/api/say',{text,id,epoch:ep}):null).catch(()=>{ const it=spkMap.get(id); spkMap.delete(id); if(it&&it.cap) karaNow(it.cap,it.fresh); quietNative(); });   // one after another: keeps them in order
     return; }
   const g=gen; q.push({cap:o.cap?(o.cap===true?text:o.cap):'',fresh:!!o.fresh,
     p:post('/api/tts',{text}).then(async r=>{ if(r.status!==200) return null;
@@ -1798,11 +1821,33 @@ function spkLevel(ts){ for(const L of spkLv){ if(ts>=L.t0&&ts<L.t0+L.level.lengt
   return null; }
 function quietCheck(){ if(!srcs.length&&!q.length&&pumpGen!==gen&&playing){ playing=false; speaking(false); } }
 // shush: stop talking. Anything he hadn't said yet still lands on screen (mute mid-answer, or you cut in)
-function shush(){ gen++; const rest=q.splice(0), pend=curIt; curIt=null; karaFlush();
-  if(info.voice_native&&(spkMap.size||playing)){ post('/api/say/stop').catch(()=>{}); for(const it of spkMap.values()) if(it.cap) karaNow(it.cap,it.fresh,true); spkMap.clear(); spkLv=[]; }
+function shush(){ gen++; sayEpoch++; const rest=q.splice(0), pend=curIt; curIt=null; karaFlush();
+  if(info.voice_native&&(spkMap.size||playing)){ post('/api/say/stop',{epoch:sayEpoch}).catch(()=>{}); for(const it of spkMap.values()) if(it.cap) karaNow(it.cap,it.fresh,true); spkMap.clear(); spkLv=[]; }
   if(pend&&pend.cap) karaNow(pend.cap,pend.fresh,true); for(const it of rest) if(it.cap) karaNow(it.cap,it.fresh,true);
   for(const x of srcs) try{ x.stop(); }catch(e){} srcs=[]; nextAt=0; pumpGen=-1; if(playing) speaking(false); playing=false; }
 const untilQuiet=async()=>{ for(let i=0;i<400 && (playing||q.length);i++) await sleep(100); };
+
+/* ================= his memory of the chat (context) ================= */
+let ctxWarned=0;
+const kTok=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n);
+function ctxRender(){ const c=info.context; if(!c) return; const bar=$('#ctxBar'), txt=$('#ctxTxt'); if(!bar||!txt) return;
+  const pct=Math.min(1,c.pct||0); bar.firstElementChild.style.width=(pct*100).toFixed(1)+'%'; bar.classList.toggle('warn',pct>=.6&&pct<.85); bar.classList.toggle('full',pct>=.85);
+  $('#ctxPct').textContent=Math.round(pct*100)+'%';
+  const rc=info.recall||{}; $('#recallTxt').textContent=rc.entries?`Quick memory: ${rc.entries} recent chats kept · answered ${rc.answered||0}× straight from it, no usage`:'Quick memory fills up as you use him; recent things he can then answer without asking Claude.';
+  const auto=info.auto_compact!==false;      // one plain sentence, so nobody has to read numbers
+  txt.textContent=c.compacting?'Tidying up…':pct>=.85?(auto?'Almost full — he’ll tidy up after this answer':'Almost full — press “Tidy up now”')
+    :pct>=.6?(auto?'Getting full — he’ll tidy up soon':'Getting full — press “Tidy up now” soon'):c.used?'Plenty of room':'Fresh chat';
+  txt.className='h '+(pct>=.85?'full':pct>=.6?'warn':''); txt.title=`${kTok(c.used)} of ${kTok(c.max)} tokens`+(c.notes?' · carrying a note from before':''); }
+function onContext(c){ info.context=c; ctxRender();
+  if(c.compacting){ tick('tidying up my notes…'); poke('thinking',2500); return; }
+  if(c.compacted){ ctxWarned=0; tick('✓ tidied up — fresh chat, I kept my notes'); poke('happy',1200); return; }
+  if(!c.used){ ctxWarned=0; return; }
+  const step=c.pct>=.9?3:c.pct>=.8?2:c.pct>=.6?1:0;      // warn once per step: 60 / 80 / 90 %
+  if(step>ctxWarned){ ctxWarned=step; const n=Math.round(c.pct*100);
+    if(info.auto_compact===false){ tick(`my memory is ${n}% full — say “tidy up” or “new chat”`,true); if(step>=2&&!busy) say(`My memory of this chat is ${n} percent full. Say tidy up, or new chat, so it doesn't use up your plan.`); }
+    else tick(`memory ${n}% full — I'll tidy up after this answer`); } }
+async function tidyNow(){ tick('tidying up…'); const r=await post('/api/compact'); const j=await r.json().catch(()=>({}));
+  if(j.error) return tick(j.error,true); if(!j.ok) tick("couldn't write the note — try again",true); await refresh(); }
 
 /* ================= server-sent events ================= */
 async function readSSE(res,handle){
@@ -1827,6 +1872,7 @@ function onEvent(ev){
   if(ev.t==='followup_soon'){ wake(); if(!busy) poke('thinking',30000); return; }   // a helper is back: he's mulling it over (its words come with the followup)
   if(ev.t==='followup'){ if(transient==='thinking') transient=null; followQ.push(ev); followTry(); return; }
   if(ev.t==='saw'){ poke('looking',1800); wake(); return; }   // Claude took a look at your screen (`void see`)
+  if(ev.t==='ctx'){ onContext(ev); return; }
   if(ev.t==='follow'){ follow=!!ev.on; hearRaw=0; if(follow) wake(); return; }
   if(ev.t==='hear'){ hearRaw=ev.v; return; }
   if(ev.t==='wake'){ if(rec||transcribing) return;
@@ -1858,13 +1904,13 @@ async function startRec(mode){
   if(mode!=='approve'){ if(followCur){ followQ.unshift(followCur); followCur=null; clearTimeout(followT); followT=setTimeout(followTry,600); } shush(); }   // (a helper's result you cut off: told again after)
   wake(); hideAsk(); menu(false);
   const r=rec={mode,stopping:false,opened:false,cancelled:false};
-  if(mode!=='approve'){ capShow(); setYou('listening…'); himSet(''); sfx('wake'); }
+  if(mode!=='approve'){ capShow(); setYou(''); himSet(''); }       // (the cue comes when the mic is actually open)
   let text=null, err=null;
   try{
     const res=await post('/api/listen',{mode:mode==='approve'?'auto':mode});
     if(!res.ok){ const j=await res.json().catch(()=>({})); throw new Error(j.error||res.statusText); }
     await readSSE(res,ev=>{ switch(ev.t){
-      case 'open': r.opened=true; if(r.stopping) post('/api/listen/stop',{cancel:r.cancelled}); break;
+      case 'open': r.opened=true; if(mode!=='approve'){ setYou('listening…'); sfx('wake'); } if(r.stopping) post('/api/listen/stop',{cancel:r.cancelled}); break;
       case 'lvl': micRaw=ev.v; break;
       case 'speech': if(mode!=='approve') setYou('…'); break;
       case 'note': tick(ev.text,true); break;
@@ -2046,6 +2092,7 @@ apEl.addEventListener('click',e=>{ const b=e.target.closest('[data-ans]'); if(b)
 /* ================= talk to claude code ================= */
 const MEM_ADD=/^(?:hey\s+void[,\s]+)?(?:please\s+)?(?:remember|don'?t forget|note down|make a note)\s*(?:that|this|:)?\s+(.{3,})$/i;
 const MEM_DEL=/^(?:hey\s+void[,\s]+)?(?:please\s+)?forget\s+(?:that|about|the)?\s*(.{3,})$/i;
+const CTX_TIDY=/^(?:hey\s+void[,\s]+)?(?:please\s+)?(?:tidy up|clean up your memory|compact (?:your |the )?(?:memory|context|chat))\W*$/i;
 const MEM_SHOW=/^(?:hey\s+void[,\s]+)?what (?:do|did) you (?:remember|know about me)\b/i;
 const PROJ_ADD=/^(?:hey\s+void[,\s]+)?(?:remember|note)\s+(?:that\s+)?((?:my|the)\s+.+?)\s+(?:project\s+|folder\s+|repo\s+)?(?:is|lives)\s+(?:in|at)\s+(~?\/?[\w.\/-]+)\s*\.?$/i;
 const NICE=/\b(thank(s| you)|good job|well done|nice( one| work)?|love you|you'?re (the best|awesome|cute|great)|good boy|cutie)\b/i;
@@ -2062,6 +2109,7 @@ async function send(text,opts={}){
     info.memory_count=r.items.length; capShow(); setYou(text); say(r.removed?'Okay, forgotten.':"I couldn't find that in my notes — opening them so you can pick."); if(!r.removed) openPanel('memory'); return; }
   if(LIVE_ON.test(text)){ setLive(true); capShow(); setYou(text); say("Okay, I'm watching. Say “stop watching” when you're done."); poke('looking',1400); sfx('ok'); return; }
   if(LIVE_OFF.test(text)){ const was=liveOn(); setLive(false); capShow(); setYou(text); say(was?'Okay, I stopped looking.':"I wasn't looking."); poke('wink',1000); return; }
+  if(CTX_TIDY.test(text)){ capShow(); setYou(text); say('Okay, tidying up.'); tidyNow(); return; }
   if(MEM_SHOW.test(text)){ capShow(); setYou(text); const n=info.memory_count||0; say(n?`I have ${n} note${n>1?'s':''} — here they are.`:"Nothing yet! Say “remember …” and I'll keep it."); openPanel('memory'); return; }
   if(!atts.length && text && !opts.claude){
     try{ const q=await (await post('/api/quick',{text})).json();
@@ -2076,9 +2124,11 @@ async function send(text,opts={}){
   const attach=atts; atts=[]; renderAtts();
   busy=true; toolMood=null; workWhat='thinking'; workT0=performance.now(); document.body.classList.add('busy');
   const kv=voiced(); let fresh=true;        // kv: the caption follows his voice instead of racing ahead of it
+  const ep0=sayEpoch;
   let buf='', spoken=0, all='', failed=false, stopped=false, ignored=false, tools=0; const t0=performance.now();
   const flush=end=>{ const rest=buf.slice(spoken); if((buf.match(/```/g)||[]).length%2 && !end) return;
-    const m2=end?[rest]:whole(rest.match(/^[\s\S]*[.!?:](?=\s)/)||(spoken===0?rest.match(/^[\s\S]{70,}?[,;—–](?=\s)/):null)); if(m2&&m2[0].trim()){ const raw=plain(m2[0]); if(kv){ enqueue(unface(raw),{cap:raw,fresh}); fresh=false; } else enqueue(unface(raw)); spoken+=m2[0].length; } };
+    const m2=end?[rest]:whole(rest.match(/^[\s\S]*[.!?:](?=\s)/)||(spoken===0?rest.match(/^[\s\S]{70,}?[,;—–](?=\s)/):null)); if(m2&&m2[0].trim()){ const raw=plain(m2[0]); const cut=sayEpoch!==ep0;      // you cut him off: the rest of this answer is written, never spoken
+      if(kv){ if(cut) karaNow(raw,fresh); else enqueue(unface(raw),{cap:raw,fresh}); fresh=false; } else if(!cut) enqueue(unface(raw)); spoken+=m2[0].length; } };
   const handle=ev=>{ switch(ev.t){
     case 'break': flush(true); if(buf.trim()) fresh=true; buf=''; spoken=0; break;
     case 'delta': CP.answer(); toolMood=null; workWhat='answering'; buf+=ev.text; all+=ev.text; if(!kv) showHim(buf); flush(false); break;
@@ -2170,6 +2220,14 @@ async function openPanel(kind){
       <div class="bar"><button class="btn sm pri" data-h="cont">↩ continue this chat</button><button class="btn sm" data-h="again">ask again</button><button class="btn sm" data-h="copy">copy answer</button></div></div>`).join('')
       :'<div class="empty">Nothing yet — everything you ask shows up here,<br>so you can reread answers or pick a chat back up.</div>';
     body._items=items;
+  } else if(kind==='plugins'){
+    $('#pTitle').textContent='Plug-ins';
+    body.innerHTML='<div class="empty">loading…</div>';
+    const j=await (await post('/api/plugins',{op:'list'})).json(), items=j.items||[];
+    body.innerHTML=(j.lean?'<div class="h" style="color:#e89a2c;font-size:11.5px;margin:2px 0 9px">Light mode is on, so he isn’t using plug-ins right now. Turn it off in Settings → Brain to use the ones switched on here.</div>':'')
+      +(items.length?items.map(x=>`<label class="tg" style="padding:7px 0;border-bottom:1px solid #1c1c1c"><input type="checkbox" data-plug="${esc(x.id)}"${x.enabled?' checked':''}><span class="sw"></span><span class="l">${esc(x.name)}<small>${esc(x.from)}${x.version?' · v'+esc(x.version):''}</small></span></label>`).join('')
+        :'<div class="empty">No plug-ins installed yet.<br>Add them with <code>/plugin</code> in Claude Code and they show up here.</div>')
+      +(items.length?'<div class="h" style="color:#8d8d8d;font-size:11.5px;margin-top:9px">Changes apply to your next chat.</div>':'');
   } else if(kind==='memory'){
     $('#pTitle').textContent='Memory';
     const items=(await (await post('/api/memory',{op:'list'})).json()).items||[];
@@ -2232,10 +2290,15 @@ panelEl.addEventListener('click',async e=>{
     send(a.prompt);
   }
 });
+panelEl.addEventListener('change',async e=>{ const id=e.target.dataset&&e.target.dataset.plug; if(!id) return;
+  const r=await post('/api/plugins',{op:'set',id,enabled:e.target.checked}); const j=await r.json().catch(()=>({}));
+  if(!r.ok){ e.target.checked=!e.target.checked; return tick(j.error||'couldn’t change that',true); }
+  tick(e.target.checked?'plug-in on':'plug-in off'); });
 panelEl.addEventListener('keydown',e=>{ if(e.key==='Enter'&&e.target.id==='memNew'){ e.preventDefault(); $('#memAdd').click(); } });
 
 /* ================= right-click menu ================= */
 const ICON={
+  plugins:'<path d="M9 2v5M15 2v5"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v5"/>',
   new:'<path d="M12 5v14M5 12h14"/>',
   bar:'<path d="M2 4h20"/><path d="M7 4v2a4 4 0 0 0 4 4h2a4 4 0 0 0 4-4V4"/>',
   cd:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
@@ -2247,7 +2310,7 @@ const ICON={
   hide:'<path d="M6 6l12 12M18 6 6 18"/>',
 };
 // (no top bar / blob button: you dock him by dragging him into a screen edge, and pull him out to get the blob back)
-const MENU=[['talk','talk'],['cd','folder'],['history','history'],['look','show my screen'],['hover','hover mode'],['set','settings'],['hide','hide']];
+const MENU=[['talk','talk'],['cd','folder'],['history','history'],['look','show my screen'],['hover','hover mode'],['plugins','plug-ins'],['set','settings'],['hide','hide']];
 const MENU_XY=[];
 menuEl.innerHTML=MENU.map(([a,l],i)=>{ const ang=(-168+i*(156/(MENU.length-1)))*Math.PI/180, r=122;
   MENU_XY[i]=[Math.cos(ang)*r/1.1, Math.sin(ang)*r/1.1];                 // same spot in the face's SVG units (330px = 300 units)
@@ -2267,7 +2330,7 @@ function layoutMenu(){
 let menuShutAt=0;
 function menu(on){ if(on) layoutMenu(); if(!on&&menuOn) menuShutAt=performance.now(); if(on!==menuOn) sfx(on?'menu':'close'); menuOn=on; menuEl.classList.toggle('on',on); document.body.classList.toggle('menu',on); if(on){ closePanels(); hideAsk(); } $('[data-a="hover"]').classList.toggle('on',!!info.hover); sendRegion(true); }
 menuEl.addEventListener('click',e=>{ const b=e.target.closest('.mb'); if(!b) return; menu(false);
-  ({talk:()=>startRec('auto'), bar:()=>toggleBar(), cd:()=>showAsk('/cd '), history:()=>openPanel('history'),
+  ({talk:()=>startRec('auto'), bar:()=>toggleBar(), cd:()=>showAsk('/cd '), history:()=>openPanel('history'), plugins:()=>openPanel('plugins'),
     look:()=>shoot('screen').then(j=>{ if(j) showAsk(''); }), hover:toggleHover, hide:dismiss, set:()=>settings(true)})[b.dataset.a](); });
 function dismiss(){ menu(false); hideAsk(); closePanels(); endListening(); if(!native('hide')) poke('sleepy',1200); }
 // Esc / hiding him: he stops listening — a recording in progress is dropped and the "just keep talking" window closes
@@ -2499,6 +2562,7 @@ window.voidLook=(dx,dy)=>{ lastMouse=performance.now(); const m=mood(lastMouse);
   if(['idle','listening','talking','curious','surprised','wink','love'].includes(m)||isTalk(m)){ tx=clamp(dx*6,-7,7); ty=clamp(dy*5,-6,6); } };
 
 /* ================= settings ================= */
+const EFFORTS=['low','medium','high','xhigh','max'];
 const MODELS=[['auto','Auto'],['default','Default'],['opus','Opus'],['sonnet','Sonnet'],['haiku','Haiku']];
 const STT=[['tiny.en','Fastest'],['base.en','Fast'],['auto','Balanced'],['medium.en','Best']];
 const TRUST=[['ask','✋','Ask me first','Edits files on his own; asks you (out loud) before running commands or going online.'],
@@ -2582,11 +2646,13 @@ $('#pkAll').addEventListener('click',()=>{ const L=curLook(), R=randomLook(L); O
 function renderSettings(){
   { const rr=$('#rootSw').closest('.row'); if(rr) rr.style.display=info.root_ok===false?'none':''; }   // no sudo on Windows
   const cur=(info.model||'default');
+  $('#effortChips').innerHTML=['',...EFFORTS].map(e=>`<button data-eff="${e}" class="${(info.effort||'')===e?'on':''}">${e||'default'}</button>`).join('');
   $('#modelChips').innerHTML=MODELS.map(([id,l])=>`<button data-m="${id}" class="${cur===id?'on':''}">${l}</button>`).join('');
   $('#voiceChips').innerHTML=(info.voices||[]).map(v=>`<button data-v="${v.id}" class="${info.voice===v.id?'on':''}">${v.label}${v.downloading?'<i>⇣</i>':''}</button>`).join('');
   const sw={rootSw:info.root,speakSw:!muted,wakeSw:info.wake_word,autoSw:info.autostart,listenShowSw:info.listen_on_show,hoverSw:info.hover,
     clickSw:info.click_through,notifySw:info.notify_done,popupSw:info.popup_done,codeSw:info.code_panel!==false,bargeSw:info.barge_in,sfxSw:info.sfx,linkSw:curLook().link,rndSw:curLook().random,
-    updSw:info.update_check!==false};
+    updSw:info.update_check!==false,fullSw:info.full_text,compactSw:info.auto_compact!==false,leanSw:info.lean!==false};
+  { const c=$('#costIn'); if(c&&document.activeElement!==c){ c.value=info.max_cost_usd||0; costLbl(); } }
   renderUpdate(); renderPtt();
   for(const k in sw){ const e=document.getElementById(k); if(e) e.checked=!!sw[k]; }
   const ps=restPu();
@@ -2673,6 +2739,7 @@ function setLook(patch){ clearTimeout(saveT); const L={...curLook(),...patch}; i
 setEl.addEventListener('click',e=>{
   if(e.target.closest('[data-close]')) return settings(false);
   const g=k=>e.target.closest(`[data-${k}]`);
+  const be=g('eff'); if(be) return setSetting({effort:be.dataset.eff}).then(()=>tick('effort → '+be.dataset.eff));
   const bm=g('m'), bv=g('v'), bp=g('ps'), bs=g('stt'), bt=g('trust'), bo=g('open'), bk=g('skin'), bsw=g('sw'), bpd=g('pdel');
   const part=e.target.closest('#lookPrev [data-part], #partChips [data-part]');
   if(part&&part.dataset.part) return selectPart(part.dataset.part);
@@ -2694,12 +2761,16 @@ setEl.addEventListener('click',e=>{
   if(e.target.closest('#pttSet')){ pttCapture=true; renderPtt(); }
   if(e.target.closest('#pttOff')) setSetting({ptt_hotkey:''}).then(()=>{ native('ptt:'); renderPtt(); tick('push-to-talk hotkey off'); });
   if(e.target.closest('#diagCopy')) copyDiagnostics();
+  if(e.target.closest('#ctxTidy')) tidyNow();
+  if(e.target.closest('#ctxNew')) slash('/new');
   if(e.target.closest('#diagReport')) post('/api/report').then(()=>tick('opening GitHub — paste the report there')).catch(()=>tick('couldn’t open the browser',true));
   if(e.target.closest('#updCheck')){ $('#updTxt').textContent='Checking…';
     post('/api/update/check').then(r=>r.json()).then(u=>{ info.update=u; renderUpdate(); }).catch(()=>tick('couldn’t reach GitHub',true)); }
   if(e.target.closest('#updNow')) post('/api/update').then(r=>r.json()).then(u=>{ info.update=u; renderUpdate();
     if(u.state==='failed') return tick(u.error||'update failed',true); poke('excited',900); tick('updating — I’ll be right back'); });
 });
+const costLbl=()=>{ const v=+$('#costIn').value; $('#costVal').textContent=v?'$'+v.toFixed(2):'No limit'; };
+setEl.addEventListener('input',e=>{ if(e.target.id==='costIn') costLbl(); });
 setEl.addEventListener('change',e=>{
   const id=e.target.id, on=e.target.checked;
   if(id==='rootSw') setSetting(on?{root:true}:{root:false,trust:'ask'}).then(()=>{ tick(on?'root mode ON — he can run anything (I\'ll ask for your sudo password)':'root mode off',on); poke(on?'scared':'happy',900); });
@@ -2714,12 +2785,16 @@ setEl.addEventListener('change',e=>{
   if(id==='notifySw') setSetting({notify_done:on});
   if(id==='popupSw') setSetting({popup_done:on});
   if(id==='updSw') setSetting({update_check:on}).then(renderUpdate);
+  if(id==='fullSw') setSetting({full_text:on}).then(showInfo);
+  if(id==='compactSw') setSetting({auto_compact:on});
+  if(id==='costIn') setSetting({max_cost_usd:+e.target.value||0}).then(()=>tick(+e.target.value?'a request stops at $'+e.target.value:'no usage limit'));
+  if(id==='leanSw') setSetting({lean:on}).then(()=>tick(on?'light mode: fewer tools, less usage':'all your tools on'));
   if(id==='codeSw'){ setSetting({code_panel:on}); if(!on) CP.hide(); }
   if(id==='micSel') setSetting({mic_device:e.target.value}).then(()=>tick('microphone changed'));
   if(id==='linkSw'){ const L=curLook(); const patch={link:on}; if(on){ patch.pupR=L.pupL; patch.whiteR=L.whiteL; } setLook(patch).then(()=>selectPart(pkPart.replace('R','L'))); }
   if(id==='rndSw') setLook({random:on}).then(()=>{ if(on){ lookRolled=false; syncLook(true); } else { lookShown=''; syncLook(); } renderSettings(); });
 });
-setEl.addEventListener('keydown',e=>{ if(e.target.matches('input[type=text]')) e.stopPropagation(); if(e.key==='Enter'&&(e.target.id==='projPath'||e.target.id==='projName')) $('#projAdd').click(); });
+setEl.addEventListener('keydown',e=>{ if(e.target.matches('input[type=text],input[type=number]')) e.stopPropagation(); if(e.key==='Enter'&&(e.target.id==='projPath'||e.target.id==='projName')) $('#projAdd').click(); });
 setInterval(()=>{ if(setEl.classList.contains('on') && (info.voices||[]).some(v=>v.downloading)) refresh().then(renderSettings); },1500);
 
 /* ================= slash commands ================= */
@@ -2728,6 +2803,8 @@ async function slash(cmd){
   if(c==='new'){ await post('/api/new'); shush(); tick('new chat'); poke('wink',1000); return refresh(); }
   if(c==='cd'){ const j=await (await post('/api/cd',{path:arg||'~'})).json(); if(j.error) tick(j.error,true); else { info=j; showInfo(); tick('→ '+j.cwd_display+' · new chat'); poke('happy',1100); } return; }
   if(c==='mute') return toggleMute();
+  if(c==='tidy'||c==='compact') return tidyNow();
+  if(c==='context'){ await refresh(); const k=info.context; return tick(`memory ${Math.round((k.pct||0)*100)}% full (${kTok(k.used)} / ${kTok(k.max)})`); }
   if(c==='stop') return post('/api/stop');
   if(c==='hide') return dismiss();
   if(c==='hover') return toggleHover();
@@ -2738,6 +2815,7 @@ async function slash(cmd){
   if(c==='clip'||c==='clipboard') return shoot('clipboard');
   if(c==='remember') return send('remember '+arg);
   if(c==='forget') return send('forget '+arg);
+  if(c==='effort'){ if(!EFFORTS.includes(arg)) return tick('/effort <'+EFFORTS.join('|')+'>',true); await setSetting({effort:arg}); return tick('effort → '+arg); }
   if(c==='model'){ await setSetting({model:arg||'default'}); tick('model → '+(info.model||'default')); return; }
   if(c==='voice'){ if(arg) await setSetting({voice:arg}); else settings(true,'voice'); return; }
   if(c==='settings') return settings(true);
@@ -2754,11 +2832,11 @@ async function slash(cmd){
     if(!SKIN_LABELS[k]) return tick('/skin <'+Object.keys(SKIN_LABELS).join('|')+'>',true); return setLook({skin:k}); }
   if(c==='pupils'){ if(!PUP_STYLES.includes(arg)) return tick('/pupils <slit|circle|dot>',true); await setSetting({pupil_style:arg}); popPupils(); return; }
   if(c==='status'){ await refresh(); tick(`${info.cwd_display} · ${info.trust} · ${info.model} · voice ${info.tts||'none'}`); return; }
-  tick('/new · /cd · /history · /memory · /remember · /look · /clip · /hover · /model · /voice · /eyes · /mute · /stop');
+  tick('/new · /tidy · /context · /cd · /history · /memory · /remember · /look · /clip · /hover · /model · /voice · /eyes · /mute · /stop');
 }
 
 /* ================= wiring ================= */
-function showInfo(){ syncEye(); document.body.classList.toggle('faceyou',info.code_face==='you'); input.placeholder=`ask in ${info.cwd_display||'~'}…`; const l=$('#cwdLbl'); if(l) l.textContent=info.cwd_display||'folder';
+function showInfo(){ syncEye(); document.body.classList.toggle('faceyou',info.code_face==='you'); document.body.classList.toggle('fulltext',!!info.full_text); ctxRender(); input.placeholder=`ask in ${info.cwd_display||'~'}…`; const l=$('#cwdLbl'); if(l) l.textContent=info.cwd_display||'folder';
   document.body.classList.toggle('root',!!info.root); }
 async function refresh(){ try{ await tokenReady; const r=await fetch('/api/state',{headers:hdr()}); const j=await r.json();
   if(!('cwd' in j)) return staleToken();      // no (or an old) token: the server only said it's running
@@ -2955,10 +3033,9 @@ const CP=(()=>{
     sp.x=clamp(sp.x,boxX+half-6,innerWidth-half+6);         // a springy overshoot mustn't poke out of the window
     sp.r+=(clamp(sp.vx*.02,-6,6)-sp.r)*Math.min(1,dt*8);   // tips a little only while it's moving
     pos={x:sp.x,y:sp.y,cx,cy};
-    const turn=clamp((sp.x-cx)/(r+W/2),-1,1);
-    // facing him: flipped, swung toward his middle at the sides, leaning back toward his eyes (top wider from your side)
-    // facing you: readable, just angled a little toward him, leaning back slightly like a page he's holding up for you
-    const yaw=faceYou()?turn*-22:180+turn*45, lean=faceYou()?-8:22-clamp((cy-sp.y)/r,0,1)*14;
+    // flat to you, never turned sideways (that made one edge taller than the other). Facing him: flipped and leaning
+    // back toward his eyes; facing you: straight on, readable
+    const yaw=faceYou()?0:180, lean=faceYou()?0:22-clamp((cy-sp.y)/r,0,1)*14;
     el.style.transform=`translate(${(sp.x-W/2).toFixed(1)}px,${(sp.y-H/2).toFixed(1)}px) rotate(${sp.r.toFixed(2)}deg) perspective(420px) rotateY(${yaw.toFixed(1)}deg) rotateX(${lean.toFixed(1)}deg)`;
   }
   requestAnimationFrame(tick);

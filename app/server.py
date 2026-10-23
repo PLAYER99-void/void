@@ -11,6 +11,7 @@ Local server (127.0.0.1 only) that:
 import argparse
 import array
 import atexit
+import collections
 import io
 import json
 import math
@@ -36,6 +37,7 @@ sys.path.insert(0, str(APP_DIR))
 import quick  # noqa: E402
 import agents  # noqa: E402
 import langmark  # noqa: E402
+import recall  # noqa: E402
 WIN = os.name == "nt"                        # Windows: OS bits go through winsys.py instead of Linux command-line tools
 if WIN:
     import winsys  # noqa: E402
@@ -111,7 +113,19 @@ DEFAULTS = {
     "trust": "ask",
     # (old setting, still honoured if you set it by hand and "trust" is missing)
     "permission_mode": "acceptEdits",
-    "model": "",
+    # auto = the small fast model for quick questions, the full one for real work
+    "model": "auto",
+    # how hard Claude thinks (claude --effort): low | medium | high | xhigh | max
+    "effort": "medium",
+    # light mode: only the tools a voice assistant needs (files, shell, web), no skills / MCP servers / sub-agents.
+    # Halves what every chat re-sends to Claude (about 25k → 13k tokens). Turn it off to give him all your tools.
+    "lean": True,
+    # stop a runaway job: Claude gives up once one request has cost this much (0 = no limit)
+    "max_cost_usd": 3,
+    # and tidy up the chat at this many tokens, however big Claude's window is (a long chat is re-read on every turn)
+    "compact_tokens": 100000,
+    # the fast model "auto" uses for quick questions
+    "auto_model": "haiku",
     "extra_args": [],
     "partial_messages": True,
     # one Claude Code process per chat, so he answers right away while his subagents keep working (false: one per message)
@@ -163,6 +177,12 @@ DEFAULTS = {
     "barge_in": True,
     # for this many seconds after he stops talking, just talk — no "hey Void" needed (0 = off)
     "follow_up": 4,
+    # context: he tracks how full Claude's memory of the chat is; past `compact_at` he writes himself a short note and
+    # starts a fresh chat from it (so a long session can't quietly eat your usage). Off = only warn.
+    "auto_compact": True,
+    "compact_at": 0.7,
+    # show everything you said in the caption (the end of it, wrapped) instead of one cut-off line
+    "full_text": True,
     # live view ("watch my screen"): turns itself off after this many minutes without you saying anything
     "live_minutes": 10,
     # little sound effects
@@ -251,11 +271,20 @@ class State:
         if not os.path.isdir(self.cwd):
             self.cwd = str(Path.home())
         self.session = s.get("session")
+        self.notes = s.get("notes") or ""          # the handoff note written when the context was compacted
+        self.ctx_used, self.ctx_max = int(s.get("ctx_used") or 0), int(s.get("ctx_max") or 200000)
+        self.compacting = False
         self.auto_pick = ""
+        self.last_worked = False                   # did the last answer use tools? then a short "yes" is still work
 
     def save(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        STATE_PATH.write_text(json.dumps({"cwd": self.cwd, "session": self.session}))
+        STATE_PATH.write_text(json.dumps({"cwd": self.cwd, "session": self.session, "notes": self.notes,
+                                          "ctx_used": self.ctx_used, "ctx_max": self.ctx_max}))
+
+    def fresh(self, session=None):
+        """A different chat: no old context, no old handoff note."""
+        self.session, self.notes, self.ctx_used = session, "", 0
 
 
 ST = State()
@@ -269,6 +298,7 @@ def pretty_path(p):
 # ---------------------------------------------------------------- memory + history
 MEM_PATH = DATA_DIR / "memory.json"
 HIST_PATH = DATA_DIR / "history.jsonl"
+recall.init(DATA_DIR, HIST_PATH)
 _mem_lock = threading.Lock()
 
 
@@ -282,6 +312,43 @@ def mem_load():
 def mem_save(items):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     MEM_PATH.write_text(json.dumps(items, indent=1))
+
+
+def claude_dir():
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def plugins_list():
+    """The Claude Code plugins you have installed, and whether each is switched on (user settings.json → enabledPlugins)."""
+    try:
+        inst = json.loads((claude_dir() / "plugins" / "installed_plugins.json").read_text(encoding="utf-8")).get("plugins") or {}
+        on = json.loads((claude_dir() / "settings.json").read_text(encoding="utf-8")).get("enabledPlugins") or {}
+    except (OSError, ValueError, AttributeError):
+        inst, on = {}, {}
+    out = []
+    for pid, entries in inst.items():
+        e = (entries[0] if isinstance(entries, list) and entries else {}) or {}
+        out.append({"id": pid, "name": pid.split("@")[0], "from": pid.partition("@")[2], "version": str(e.get("version") or ""),
+                    "enabled": on.get(pid) is True})
+    return sorted(out, key=lambda x: x["name"].lower())
+
+
+def plugin_set(pid, enabled):
+    """Switch one installed plugin on/off. Only ids that are really installed; every other setting is left alone."""
+    if pid not in {x["id"] for x in plugins_list()}:
+        return False
+    f = claude_dir() / "settings.json"
+    try:
+        cfg = json.loads(f.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        cfg = {}
+    except ValueError:
+        return False                              # (never overwrite a settings file we can't read)
+    cfg.setdefault("enabledPlugins", {})[pid] = bool(enabled)
+    tmp = f.with_suffix(".json.void-tmp")
+    tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    os.replace(tmp, f)
+    return True
 
 
 def mem_add(text):
@@ -341,13 +408,12 @@ def memory_prompt(fresh):
     notes = notes_text()
     if notes:
         parts.append(notes)
-    if fresh:                                   # a new conversation: give him a sense of what happened lately
-        recent = [h for h in hist_load(8) if h.get("you")][:6]
-        if recent:
-            parts.append("Recent conversations with the user (background only — don't bring these up unless the user "
-                     "refers to them):\n" + "\n".join(
-                f"- [{time.strftime('%b %d %H:%M', time.localtime(h['ts']))}, in {h.get('cwd_display', '?')}] "
-                f"they said: {h['you'][:160]!r} — you answered: {(h.get('him') or '')[:200]!r}" for h in recent))
+    if ST.notes:                                # the chat was compacted: this is what happened so far
+        parts.append("Notes you wrote when this chat got long (what's done and what's open — carry on from here):\n"
+                     + ST.notes)
+    rp = recall.prompt() if fresh else ""      # a new conversation: what happened lately, today in full (see recall.py)
+    if rp:
+        parts.append(rp)
     return "\n\n".join(parts)
 
 
@@ -1049,6 +1115,33 @@ RATE = 16000
 FRAME = RATE * 2 * 40 // 1000               # 40 ms of s16le mono = 1280 bytes
 
 
+class Floor:
+    """The room's noise level: the quiet end (20th percentile) of the last ~3 s. Steady background (music, a fan) lifts
+    it within seconds, and the pauses between words still count as quiet. `hold` skips a frame (you're talking)."""
+
+    def __init__(self):
+        self.h = collections.deque(maxlen=75)
+        self.v = 0.0
+
+    def update(self, rms, hold=False):
+        if not hold or not self.h:
+            self.h.append(rms)
+            self.v = sorted(self.h)[len(self.h) // 5]
+        return self.v
+
+
+def last_speech_end(pcm: bytes):
+    """Where, in seconds into `pcm`, someone is last heard talking (the speech detector, so music doesn't count).
+    None: nobody. False: no detector available."""
+    try:
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+        ts = get_speech_timestamps(pcm_audio(pcm), VadOptions(min_speech_duration_ms=120, min_silence_duration_ms=300,
+                                                              speech_pad_ms=0))
+    except Exception:  # noqa: BLE001
+        return False
+    return ts[-1]["end"] / RATE if ts else None
+
+
 class MicAuto:
     """Keeps your voice at a level he hears well. After you speak: if it came in quiet, turn the mic's Windows level up;
     if it clipped, turn it down. Once Windows is at 100% and you're still quiet, `soft` boosts what the speech detector
@@ -1200,7 +1293,9 @@ class Listen:
         emit(t="open", rec=name)
         pcm = bytearray()
         t0 = time.monotonic()
+        fl = Floor()
         floor, spoke, voiced, last_voice, peak, clipped, clip_run = None, False, 0, t0, 0.0, 0, 0
+        vad_at = vad_last = 0.0
         reason = "stop"
         try:
             while True:
@@ -1217,24 +1312,27 @@ class Listen:
                     if clip_run >= 3:
                         clipped += c
                     now = time.monotonic()
-                    # noise floor: settles over the first ~quarter second, then drifts slowly toward quiet
-                    if floor is None:
-                        floor = rms
-                    elif now - t0 < 0.3 or rms < floor:
-                        floor = floor * 0.8 + rms * 0.2
-                    else:
-                        floor = floor * 0.998 + rms * 0.002
+                    floor = fl.update(rms, hold=voiced >= 3)
                     thr = max(0.012, floor * 3.0)
                     voiced = min(4, voiced + 1) if rms > thr else max(0, voiced - 1)
                     if voiced >= 3:
                         if not spoke:
                             emit(t="speech")
+                            vad_last = now
                         spoke, last_voice = True, now
                     elif spoke and rms > thr * 0.6:
                         last_voice = now
                     emit(t="lvl", v=round(min(1.0, max(0.0, (rms - floor) * 12)), 3))
                     if self.mode == "auto":
-                        if spoke and now - last_voice > 1.2:
+                        if spoke and now - vad_at > 0.4:
+                            vad_at = now                # loud music keeps the level up: ask the speech detector too
+                            tail = bytes(pcm[-RATE * 2:])
+                            e = last_speech_end(tail)
+                            if e:
+                                vad_last = now - (len(tail) / (RATE * 2) - e)
+                            elif e is False:
+                                vad_last = now
+                        if spoke and (now - last_voice > 1.2 or now - vad_last > 1.6):
                             reason = "done"
                         elif not spoke and now - t0 > 8:
                             reason, self.cancel = "nospeech", True
@@ -1260,6 +1358,12 @@ class Listen:
             return
         if spoke or (floor is not None and peak > max(0.001, floor * 2.5)):   # you said something, maybe too quietly
             MicAuto.learn(bytes(pcm))
+        if spoke and self.mode == "auto" and not self.cancel and reason == "done":
+            try:
+                if speech_seconds(bytes(pcm)) < 0.25:     # it was the music, not you
+                    self.cancel, reason = True, "nospeech"
+            except Exception:  # noqa: BLE001
+                pass
         if self.cancel:
             emit(t="cancel", why=reason)
             return
@@ -1325,12 +1429,19 @@ class Wake:
 
     @classmethod
     def speaking(cls):
-        return time.monotonic() < cls.speaking_until
+        """Talking, or about to: more sentences are waiting (his voice must never count as yours)."""
+        return time.monotonic() < cls.speaking_until or not Speaker.idle()
+
+    @classmethod
+    def window_open(cls):
+        """The "just talk" window: after he's done, and not while Claude is still working on the answer."""
+        return not cls.speaking() and cls.follow_from <= time.monotonic() < cls.follow_until and not ST.lock.locked()
 
     @classmethod
     def talking_until(cls, end):
-        """He's talking until `end`; the follow-up window opens then."""
-        cls.speaking_until = cls.follow_from = end
+        """He's talking until `end`; the follow-up window opens just before that, so a quick answer isn't lost."""
+        cls.speaking_until = end
+        cls.follow_from = end - 0.15
         cls.follow_until = end + float(CFG.get("follow_up") or 0)
         cls.nudge()
 
@@ -1385,11 +1496,12 @@ class Wake:
     @classmethod
     def session(cls):
         mic, _name, buf = open_mic()
+        fl = Floor()
         floor, voiced, seg, in_speech, last_voice, started = None, 0, bytearray(), False, 0.0, 0.0
-        pre, n = bytearray(), 0
+        pre, n, vad_at, vad_last = bytearray(), 0, 0.0, 0.0
         cls.cut = None
         try:
-            while cls.should_run():
+            while cls.should_run() or (in_speech and not cls.asleep and not Listen.lock.locked()):   # (finish what you started saying)
                 try:
                     buf += mic.read(0.2)
                 except EOFError:
@@ -1398,7 +1510,8 @@ class Wake:
                     fr, buf = buf[:FRAME], buf[FRAME:]
                     s = memoryview(fr).cast("h")
                     rms = (sum(x * x for x in s) / (len(fr) // 2)) ** 0.5 / 32768.0 * MicAuto.soft
-                    floor = rms if floor is None else (floor * 0.9 + rms * 0.1 if rms < floor else floor * 0.999 + rms * 0.001)
+                    # (his own voice, and the first seconds of yours, don't count as background)
+                    floor = fl.update(rms, hold=cls.speaking() or (in_speech and len(seg) < RATE * 2 * 4))
                     thr = max(0.015, floor * 3.2)
                     voiced = min(4, voiced + 1) if rms > thr else max(0, voiced - 1)
                     now = time.monotonic()
@@ -1408,7 +1521,7 @@ class Wake:
                             cls.check(bytes(seg), started)
                         in_speech, seg, cls.follow_until = False, bytearray(), 0.0
                     # you started talking inside the follow-up window: show him hearing you, ring/eyes move with your voice
-                    fol = in_speech and not cls.speaking() and cls.follow_from <= started < cls.follow_until
+                    fol = cls.window_open()               # shown the moment the window opens, so you know when to talk
                     if fol != cls.follow_on:
                         cls.follow_on = fol
                         BUS.pub(t="follow", on=fol)
@@ -1419,7 +1532,15 @@ class Wake:
                         seg += fr
                         if rms > thr * 0.6:
                             last_voice = now
-                        if now - last_voice > 0.7 or len(seg) > RATE * 2 * 12:
+                        if now - vad_at > 0.4:
+                            vad_at = now                      # music keeps the level up: ask the speech detector too
+                            tail = bytes(seg[-RATE * 2:])
+                            e = last_speech_end(tail)
+                            if e:
+                                vad_last = now - (len(tail) / (RATE * 2) - e)
+                            elif e is False:
+                                vad_last = now
+                        if now - last_voice > 0.7 or now - vad_last > 1.3 or len(seg) > RATE * 2 * 12:
                             in_speech = False
                             if len(seg) > RATE * 2 * 0.35:
                                 cls.check(bytes(seg), started)
@@ -1428,6 +1549,7 @@ class Wake:
                         pre = (pre + fr)[-FRAME * 8:]
                         if voiced >= 3:
                             in_speech, last_voice, seg, started = True, now, bytearray(pre), now
+                            vad_last = now
         finally:
             if cls.follow_on:
                 cls.follow_on = False
@@ -1437,10 +1559,13 @@ class Wake:
     @classmethod
     def check(cls, pcm, started):
         # started after he finished talking, inside the follow-up window → it's a request, no "hey Void" needed
-        follow = not cls.speaking() and cls.follow_from <= started < cls.follow_until
+        follow = not cls.speaking() and cls.follow_from <= started < cls.follow_until and not ST.lock.locked()
         if not cls.speaking():                   # (while he talks the mic also hears him: don't tune to his voice)
             MicAuto.learn(pcm)
         try:
+            ss = speech_seconds(pcm)
+            if ss < 0.25 or ss < len(pcm) / (RATE * 2) * 0.2:    # music or noise, not talking: don't let Whisper dream up words
+                return
             text = transcribe_pcm(pcm) if follow else transcribe_pcm(pcm, beam=1, hint="Hey Void.")
         except Exception as e:  # noqa: BLE001
             print(f"[void] wake word stt: {e}", file=sys.stderr)
@@ -1456,7 +1581,7 @@ class Wake:
             BUS.pub(t="wake", text=rest)
         elif follow:
             said = (text or "").strip(" .,!?")
-            if said and said.lower() not in NOISE_WORDS:
+            if len(said.split()) >= 2 and said.lower() not in NOISE_WORDS:     # (a stray word isn't a request)
                 cls.follow_until = 0.0
                 BUS.pub(t="wake", text=said, follow=True)
 
@@ -1941,6 +2066,7 @@ class Speaker:
     ready = []           # (gen, id, text, pcm, prate, words, level) waiting to be played
     making = False
     gen = 0
+    epoch = 0            # the page's "he was cut off" count: sentences it sent before the cut-off are never played
     proc = None
     prate = None
     t0 = 0.0
@@ -1970,8 +2096,10 @@ class Speaker:
                 t.start()
 
     @classmethod
-    def say(cls, text, sid):
+    def say(cls, text, sid, epoch=None):
         with cls.cv:
+            if epoch is not None and epoch < cls.epoch:      # sent before you cut him off, arrived after
+                return
             cls.todo.append((cls.gen, sid, text))
             if all(isinstance(x[1], int) for x in cls.todo):     # sentences can arrive out of order: play them in order
                 cls.todo.sort(key=lambda x: (x[0], x[1]))
@@ -1984,8 +2112,9 @@ class Speaker:
             return not cls.todo and not cls.ready and not cls.making and cls.written / (cls.prate or 1) < time.monotonic() - cls.t0
 
     @classmethod
-    def stop(cls):
+    def stop(cls, epoch=None):
         with cls.cv:
+            cls.epoch = max(cls.epoch, epoch or 0)
             cls.gen += 1
             cls.todo.clear()
             cls.ready.clear()
@@ -2112,7 +2241,7 @@ class Speaker:
             start = cls.t0 + cls.written / cls.prate
             dur = len(pcm) / 2 / prate
             if g == cls.gen:                                     # (not if he was cut off meanwhile)
-                Wake.talking_until(start + dur + 0.8)
+                Wake.talking_until(start + dur + 0.45)
             cls.stats["sentences"] = cls.stats.get("sentences", 0) + 1
             cls.stats["audio_s"] = round(cls.stats.get("audio_s", 0) + dur, 2)
             BUS.pub(t="spk", id=sid, at=round((start - now + cls.LAT) * 1000), dur=round(dur, 3), words=words,
@@ -2350,6 +2479,24 @@ def hooks_file():
     return str(HOOKS_PATH)
 
 
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# (light mode keeps Agent: the long-lived process and its little Voids are built on his subagents, see agents.py)
+LEAN_TOOLS = "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,Agent"
+
+
+WORKISH = re.compile(r"\b(code|files?|fix|bug|commit|tests?|run|build|refactor|install|folder|project|git|error|script|"
+                     r"function|write|edit|create|make|deploy|server|repo|update|delete|rename|search|find|package|"
+                     r"config|open|move|copy|download|change|add|remove|set|screen|look|read|check|debug)\b", re.I)
+
+
+def pick_auto(said, extra, follow):
+    """Auto model: the fast one only for a short, plain question. Anything that looks like work, an attachment, or a
+    reply to a job he just did (\"yes, do it\") goes to the full model, and so does a chat that's mid-task."""
+    if extra or len(said) >= 160 or WORKISH.search(said) or ST.last_worked:
+        return ""
+    return CFG.get("auto_model") or "haiku"
+
+
 def perm_args():
     tr = trust()
     if tr in ("root", "trust"):
@@ -2357,6 +2504,20 @@ def perm_args():
     if tr == "readonly":
         return ["--permission-mode", "plan"]
     return ["--permission-mode", "acceptEdits", "--settings", hooks_file()]
+
+
+def usage_args(live=False):
+    """Effort, light mode and the cost stop. The cost stop is per request, so only the one-process-per-message way
+    gets it: in the long-lived process --max-budget-usd would cap the whole chat, not each message."""
+    c = []
+    if CFG.get("effort") in EFFORTS:
+        c += ["--effort", CFG["effort"]]
+    if CFG.get("lean", True):
+        c += ["--tools", LEAN_TOOLS, "--disable-slash-commands", "--strict-mcp-config",
+              "--exclude-dynamic-system-prompt-sections"]
+    if not live and float(CFG.get("max_cost_usd") or 0) > 0:
+        c += ["--max-budget-usd", str(CFG["max_cost_usd"])]
+    return c
 
 
 def base_prompt():
@@ -2388,6 +2549,7 @@ def build_cmd(binary, partial, live=False):
     mdl = pick_model()
     if mdl:
         c += ["--model", mdl]
+    c += usage_args(live)
     sp = base_prompt()
     mp = memory_prompt(fresh=not ST.session)
     if mp:
@@ -2434,7 +2596,7 @@ def claude_env():
 def brain_launch(binary, partial):
     """Everything the long-lived process needs for this message (see agents.Brain for what each part restarts)."""
     return {"cmd": build_cmd(binary, partial, live=True), "perm": (trust(), ST.cwd),
-            "sig": (binary, partial, base_prompt(), tuple(CFG["extra_args"])), "session": ST.session,
+            "sig": (binary, partial, base_prompt(), tuple(usage_args(live=True)), tuple(CFG["extra_args"])), "session": ST.session,
             "model": pick_model(), "notes": notes_text(), "cwd": ST.cwd, "env": claude_env()}
 
 
@@ -2459,8 +2621,81 @@ def brain_session(sid):
         ST.save()
 
 
-BRAIN = agents.Brain(brain_pub, on_session=brain_session, describe=describe_tool)
+def brain_ctx(ev):
+    """The context meter, from the main agent's own requests (see track_context)."""
+    if ev.get("window"):
+        ST.ctx_max = ev["window"]
+        track_context(None)
+    else:
+        track_context(ev.get("usage"))
+
+
+BRAIN = agents.Brain(brain_pub, on_session=brain_session, describe=describe_tool, on_ctx=brain_ctx)
 LONG = {"ok": True}                              # (false once this Claude Code turned out not to take stream-json input)
+
+
+def track_context(usage):
+    """How full Claude's memory of this chat is: what the last request read (new + cached input) out of the window."""
+    if isinstance(usage, dict):
+        ST.ctx_used = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                            "cache_creation_input_tokens"))
+    BUS.pub(t="ctx", **context_info())
+
+
+def ctx_scale():
+    """What the meter measures against: his own tidy-up budget, not Claude's window (which can be a million tokens)."""
+    cap, at = int(CFG.get("compact_tokens") or 0), float(CFG.get("compact_at") or 0.7)
+    return min(ST.ctx_max, int(cap / at)) if cap else ST.ctx_max
+
+
+def context_info():
+    mx = max(ctx_scale(), 1)
+    return {"used": ST.ctx_used, "max": mx, "pct": round(ST.ctx_used / mx, 3), "notes": bool(ST.notes),
+            "compacting": ST.compacting}
+
+
+COMPACT_PROMPT = ("This chat is getting long, so you're about to start over from a note you write now. Write that note "
+                  "for yourself: plain text, under 350 words, no preamble. Cover the user's goal, what's done (files "
+                  "changed, decisions and why), what's still open or broken, and anything the user asked you to "
+                  "remember.")
+
+
+def compact_session():
+    """Ask Claude for a handoff note, then start a fresh chat that carries it. Returns True on success."""
+    binary = claude_bin()
+    if not (binary and ST.session):
+        return False
+    ask = (f"Earlier notes:\n{ST.notes}\n\n" if ST.notes else "") + COMPACT_PROMPT
+    ST.compacting = True
+    BUS.pub(t="ctx", **context_info())
+    try:
+        # (writing a handoff note needs no big model or deep thinking: the cheap one re-reads the whole chat for far less)
+        out = subprocess.run([binary, "-p", "--resume", ST.session, "--tools", "", "--model", "haiku", "--effort", "low",
+                              "--output-format", "json"],
+                             input=ask, capture_output=True, text=True, timeout=180, cwd=ST.cwd).stdout
+        note = (json.loads(out).get("result") or "").strip()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        note = ""
+    finally:
+        ST.compacting = False
+    if len(note) < 40:
+        BUS.pub(t="ctx", **context_info())
+        return False
+    ST.session, ST.notes, ST.ctx_used = None, note[:4000], 0
+    ST.save()
+    end_chat()                                   # (the long-lived process goes too: the next message starts the new chat)
+    BUS.pub(t="ctx", compacted=True, **context_info())
+    return True
+
+
+def auto_compact():
+    """After an answer: if the chat is past `compact_at` of the window, compact it (waits for any run in progress)."""
+    if BRAIN.running() or not ST.lock.acquire(blocking=False):
+        return                                   # (helpers still working: a new chat would stop them, so not now)
+    try:
+        compact_session()
+    finally:
+        ST.lock.release()
 
 
 def run_claude(prompt, emit, partial):
@@ -2497,6 +2732,8 @@ def run_claude(prompt, emit, partial):
         for dest, ev in stream.feed(o):
             if dest == "session":
                 brain_session(ev)
+            elif dest == "ctx":
+                brain_ctx(ev)
             elif dest == "bus":
                 if ev.get("t") != "followup":         # (its words already came with the rest)
                     BUS.pub(**ev)
@@ -2851,7 +3088,8 @@ def state_info():
         "bar_edge": CFG.get("bar_edge") if CFG.get("bar_edge") in ("top", "bottom", "left", "right") else "top",
         "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd), "session": bool(ST.session),
         "tts": tts_engine(), "mic": bool(OSYS) or bool(mic_cmds()), "stt": "ready" if _whisper else (_whisper_err or "loading"),
-        "trust": trust(), "model": CFG["model"] or "default", "root": bool(CFG.get("root_mode")) and not WIN, "root_ok": not WIN,
+        "trust": trust(), "model": CFG["model"] or "default", "effort": CFG.get("effort") or "", "lean": bool(CFG.get("lean", True)), "max_cost_usd": CFG.get("max_cost_usd") or 0,
+        "compact_tokens": CFG.get("compact_tokens") or 0, "root": bool(CFG.get("root_mode")) and not WIN, "root_ok": not WIN,
 
         "wake_word": bool(CFG.get("wake_word")), "notify_done": bool(CFG.get("notify_done")),
         "popup_done": bool(CFG.get("popup_done")), "hover": bool(CFG.get("hover")), "code_panel": CFG.get("code_panel", True) is not False, "live_minutes": int(CFG.get("live_minutes") or 10), "voice_native": Speaker.available(), "code_face": "you" if CFG.get("code_face") == "you" else "him",
@@ -2873,6 +3111,7 @@ def state_info():
         "voice_engine": tts_engine() or "none",
         "claude": bool(claude_bin()), "busy": ST.lock.locked(), "config": str(CONF_PATH),
         "subagents": BRAIN.running(),
+        "context": context_info(), "recall": recall.stats(), "auto_compact": bool(CFG.get("auto_compact", True)), "full_text": bool(CFG.get("full_text")),
     }
 
 
@@ -2969,10 +3208,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not text or not tts_engine():
                     BUS.pub(t="spk_skip", id=b.get("id"))
                 else:
-                    Speaker.say(text, b.get("id"))
+                    Speaker.say(text, b.get("id"), b.get("epoch"))
                 return self._json({"ok": True})
             if p == "/api/say/stop":
-                Speaker.stop()
+                Speaker.stop(json.loads(self._body() or b"{}").get("epoch"))
                 return self._json({"ok": True})
             if p == "/api/listen":
                 Wake.end_follow("cancel")                # a normal recording takes over from the follow-up window
@@ -3019,6 +3258,8 @@ class Handler(BaseHTTPRequestHandler):
                 if "model" in b:
                     m = str(b["model"] or "").strip()
                     upd["model"] = "" if m in ("", "default") else m
+                if b.get("effort") in EFFORTS or b.get("effort") == "":
+                    upd["effort"] = b["effort"]
                 if "voice" in b and b["voice"] in VOICES:
                     upd["voice"] = b["voice"]
                     if VOICES[b["voice"]].get("piper"):
@@ -3045,8 +3286,15 @@ class Handler(BaseHTTPRequestHandler):
                     AskPass.forget()
                 if "follow_up" in b:
                     upd["follow_up"] = max(0, min(60, int(b.get("follow_up") or 0)))
+                try:                                    # usage limits: 0 switches each one off
+                    if "max_cost_usd" in b:
+                        upd["max_cost_usd"] = round(max(0.0, min(1000.0, float(b["max_cost_usd"] or 0))), 2)
+                    if "compact_tokens" in b:
+                        upd["compact_tokens"] = max(0, min(5000000, int(float(b["compact_tokens"] or 0))))
+                except (TypeError, ValueError):
+                    pass
                 for key in ("wake_word", "notify_done", "popup_done", "code_panel", "hover", "click_through", "autostart", "listen_on_show",
-                            "barge_in", "sfx", "update_check"):
+                            "barge_in", "sfx", "update_check", "auto_compact", "full_text", "lean"):
                     if key in b:
                         upd[key] = bool(b[key])
                 if "ptt_hotkey" in b:
@@ -3086,10 +3334,15 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/events":
                 return self.events()
             if p == "/api/quick":
-                r = quick.handle(json.loads(self._body() or b"{}").get("text", ""))
+                said = json.loads(self._body() or b"{}").get("text", "")
+                mem = recall.answer(said)                # answered from his quick memory: no Claude call, no usage
+                if mem:
+                    return self._json({"handled": True, "say": mem, "mood": "happy", "state": state_info()})
+                r = quick.handle(said)
                 if r and r.get("cd"):
                     end_chat()
-                    ST.cwd, ST.session = r["cd"], None
+                    ST.cwd = r["cd"]
+                    ST.fresh()
                     ST.save()
                     r["state"] = state_info()
                 return self._json({"handled": bool(r), **(r or {})})
@@ -3148,6 +3401,11 @@ class Handler(BaseHTTPRequestHandler):
                 b = json.loads(self._body() or b"{}")
                 notify(str(b.get("title") or "Void"), str(b.get("body") or ""))
                 return self._json({"ok": True})
+            if p == "/api/plugins":
+                b = json.loads(self._body() or b"{}")
+                if b.get("op") == "set" and not plugin_set(str(b.get("id") or ""), b.get("enabled")):
+                    return self._json({"error": "couldn't change that plug-in", "items": plugins_list()}, 400)
+                return self._json({"items": plugins_list(), "lean": bool(CFG.get("lean", True))})
             if p == "/api/memory":
                 b = json.loads(self._body() or b"{}")
                 op = b.get("op", "list")
@@ -3175,14 +3433,24 @@ class Handler(BaseHTTPRequestHandler):
                 if not d_path.is_dir():
                     return self._json({"error": f"that folder is gone: {pretty_path(str(d_path))}"}, 400)
                 end_chat()
-                ST.cwd, ST.session = str(d_path), b.get("session") or None
+                ST.cwd = str(d_path)
+                ST.fresh(b.get("session") or None)
                 ST.save()
                 return self._json(state_info())
             if p == "/api/devices":
                 return self._json({"mics": list_mics()})
+            if p == "/api/compact":                   # "tidy up now"
+                if not ST.lock.acquire(blocking=False):
+                    return self._json({"error": "still working on the last one"}, 409)
+                try:
+                    if not ST.session:
+                        return self._json({"error": "nothing to tidy — this chat is empty"}, 400)
+                    return self._json({"ok": compact_session(), "context": context_info()})
+                finally:
+                    ST.lock.release()
             if p == "/api/new":
                 end_chat()
-                ST.session = None
+                ST.fresh()
                 ST.save()
                 return self._json(state_info())
             if p == "/api/cd":
@@ -3191,7 +3459,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not os.path.isdir(path):
                     return self._json({"error": f"not a directory: {pretty_path(path)}"}, 400)
                 end_chat()
-                ST.cwd, ST.session = path, None
+                ST.cwd = path
+                ST.fresh()
                 ST.save()
                 return self._json(state_info())
             return self._json({"error": "not found"}, 404)
@@ -3268,11 +3537,8 @@ class Handler(BaseHTTPRequestHandler):
             prompt = FOLLOW_NOTE + said
         if not prompt:
             return self._json({"error": "empty prompt"}, 400)
-        workish = re.search(r"\b(code|file|files|fix|bug|commit|test|tests|run|build|refactor|install|folder|project|git|"
-                            r"error|script|function|write|edit|create|make|deploy|server|repo|update|delete|rename|"
-                            r"search|find|install|package|config)\b", said, re.I)
-        ST.auto_pick = "haiku" if (len(said) < 160 and not extra and not workish) else ""
-        if not ST.lock.acquire(blocking=False):
+        ST.auto_pick = pick_auto(said, extra, follow)
+        if not ST.lock.acquire(timeout=180 if ST.compacting else 0):    # (tidying its notes: wait, don't refuse)
             return self._json({"error": "still working on the last one"}, 409)
         try:
             self.send_response(200)
@@ -3327,6 +3593,8 @@ class Handler(BaseHTTPRequestHandler):
                     rec["him"] += "\n\n"
                 elif t == "tool" and len(rec["tools"]) < 30:
                     rec["tools"].append(kw.get("name"))
+                    if kw.get("name") in recall.EDIT_TOOLS and kw.get("detail"):
+                        rec.setdefault("files", []).append(os.path.basename(kw["detail"].rstrip("…")))
                 elif t == "result":
                     if not rec["him"].strip() and kw.get("text"):
                         rec["him"] = kw["text"]
@@ -3356,7 +3624,7 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 if r == "retry_fresh":
                     end_chat()
-                    ST.session = None
+                    ST.session, ST.ctx_used = None, 0
                     ST.save()
                     emit(t="note", text="previous session couldn't be resumed — started fresh")
                     continue
@@ -3366,12 +3634,16 @@ class Handler(BaseHTTPRequestHandler):
             rec["session"] = ST.session
             rec["him"] = untag(rec["him"]).strip()[-6000:]
             try:
+                ST.last_worked = bool(rec["tools"])
                 hist_add(rec)
-            except OSError:
-                pass
+                recall.add(rec)
+            except Exception as e:  # noqa: BLE001  (a notes problem must never break an answer)
+                print(f"[void] history/quick memory: {e}", file=sys.stderr)
             emit(t="done")
         finally:
             ST.lock.release()
+        if CFG.get("auto_compact", True) and ST.ctx_used >= ctx_scale() * float(CFG.get("compact_at") or 0.7):
+            threading.Thread(target=auto_compact, daemon=True).start()
         return None
 
 
