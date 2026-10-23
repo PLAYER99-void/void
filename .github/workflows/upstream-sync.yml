@@ -1,10 +1,13 @@
 name: upstream-sync
-# Keeps this fork's macos branch on top of PLAYER99-void/void. Every six hours (or on demand) it fast-forwards main to
-# upstream's main and merges that into macos. A conflict stops the run without pushing anything, and GitHub emails the
+# Keeps this fork's macos branch on top of PLAYER99-void/void. Upstream's notify-fork workflow starts it on every push
+# to upstream's main (a daily run catches any missed one); it fast-forwards main to upstream's main and merges that
+# into macos. A conflict stops the run without pushing anything, and GitHub emails the
 # failure; resolve it by hand. When upstream bumps app/VERSION it tags the merge and builds the DMG for that release.
 on:
+  repository_dispatch:
+    types: [upstream-push]
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "17 9 * * *"
   workflow_dispatch:
 permissions:
   contents: write
@@ -13,7 +16,7 @@ concurrency:
   group: upstream-sync
 jobs:
   sync:
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
