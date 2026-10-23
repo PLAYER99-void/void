@@ -2092,7 +2092,7 @@ apEl.addEventListener('click',e=>{ const b=e.target.closest('[data-ans]'); if(b)
 /* ================= talk to claude code ================= */
 const MEM_ADD=/^(?:hey\s+void[,\s]+)?(?:please\s+)?(?:remember|don'?t forget|note down|make a note)\s*(?:that|this|:)?\s+(.{3,})$/i;
 const MEM_DEL=/^(?:hey\s+void[,\s]+)?(?:please\s+)?forget\s+(?:that|about|the)?\s*(.{3,})$/i;
-const CTX_TIDY=/^(?:hey\s+void[,\s]+)?(?:please\s+)?(?:tidy up|clean up your memory|compact (?:your |the )?(?:memory|context|chat))\W*$/i;
+const CTX_TIDY=/^(?:(?:hey\s+)?void[,\s]+)?(?:please\s+)?(?:tidy up|clean up your memory|compact (?:your |the )?(?:memory|context|chat))\W*$/i;
 const MEM_SHOW=/^(?:hey\s+void[,\s]+)?what (?:do|did) you (?:remember|know about me)\b/i;
 const PROJ_ADD=/^(?:hey\s+void[,\s]+)?(?:remember|note)\s+(?:that\s+)?((?:my|the)\s+.+?)\s+(?:project\s+|folder\s+|repo\s+)?(?:is|lives)\s+(?:in|at)\s+(~?\/?[\w.\/-]+)\s*\.?$/i;
 const NICE=/\b(thank(s| you)|good job|well done|nice( one| work)?|love you|you'?re (the best|awesome|cute|great)|good boy|cutie)\b/i;
