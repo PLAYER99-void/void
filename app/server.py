@@ -1142,6 +1142,10 @@ def last_speech_end(pcm: bytes):
     return ts[-1]["end"] / RATE if ts else None
 
 
+# when a spoken request is over: this long with no voice, or with nothing the speech detector calls speech
+TURN_QUIET, TURN_VAD, TURN_MAX = 1.2, 1.6, 120
+
+
 class MicAuto:
     """Keeps your voice at a level he hears well. After you speak: if it came in quiet, turn the mic's Windows level up;
     if it clipped, turn it down. Once Windows is at 100% and you're still quiet, `soft` boosts what the speech detector
@@ -1332,13 +1336,13 @@ class Listen:
                                 vad_last = now - (len(tail) / (RATE * 2) - e)
                             elif e is False:
                                 vad_last = now
-                        if spoke and (now - last_voice > 1.2 or now - vad_last > 1.6):
+                        if spoke and (now - last_voice > TURN_QUIET or now - vad_last > TURN_VAD):
                             reason = "done"
                         elif not spoke and now - t0 > 8:
                             reason, self.cancel = "nospeech", True
                     if now - t0 > 1.5 and peak < 0.0005:
                         reason = "silent"          # dead input: say so right away instead of waiting
-                    if now - t0 > 120:
+                    if now - t0 > TURN_MAX:
                         reason = "toolong"
                     if reason != "stop":
                         self.stop_ev.set()
@@ -1499,7 +1503,8 @@ class Wake:
         fl = Floor()
         floor, voiced, seg, in_speech, last_voice, started = None, 0, bytearray(), False, 0.0, 0.0
         pre, n, vad_at, vad_last = bytearray(), 0, 0.0, 0.0
-        cls.cut = None
+        req, said = False, None              # req: this burst is a request (a follow-up, or it began "hey Void"), so it
+        cls.cut = None                       # runs until you've finished, like a normal listen, not to the first breath
         try:
             while cls.should_run() or (in_speech and not cls.asleep and not Listen.lock.locked()):   # (finish what you started saying)
                 try:
@@ -1540,24 +1545,46 @@ class Wake:
                                 vad_last = now - (len(tail) / (RATE * 2) - e)
                             elif e is False:
                                 vad_last = now
-                        if now - last_voice > 0.7 or now - vad_last > 1.3 or len(seg) > RATE * 2 * 12:
+                        if req:
+                            done = (now - last_voice > TURN_QUIET or now - vad_last > TURN_VAD
+                                    or len(seg) > RATE * 2 * TURN_MAX)
+                        else:
+                            done = now - last_voice > 0.7 or now - vad_last > 1.3 or len(seg) > RATE * 2 * 12
+                            if done and not cls.speaking() and len(seg) > RATE * 2 * 0.35:
+                                said = cls.heard(bytes(seg))
+                                if WAKE_RE.match(said or ""):     # "hey Void, ...": hear the rest of it out
+                                    req, done, said = True, False, None
+                        if done:
                             in_speech = False
                             if len(seg) > RATE * 2 * 0.35:
-                                cls.check(bytes(seg), started)
-                            seg = bytearray()
+                                cls.check(bytes(seg), started, None if req else said)
+                            seg, req, said = bytearray(), False, None
                     else:
                         pre = (pre + fr)[-FRAME * 8:]
                         if voiced >= 3:
                             in_speech, last_voice, seg, started = True, now, bytearray(pre), now
                             vad_last = now
+                            req = cls.window_open() and not cls.speaking()
         finally:
             if cls.follow_on:
                 cls.follow_on = False
                 BUS.pub(t="follow", on=False)
             mic.close()
 
+    @staticmethod
+    def heard(pcm):
+        """A quick listen for his name at the first pause (None: nothing worth transcribing)."""
+        try:
+            ss = speech_seconds(pcm)
+            if ss < 0.25 or ss < len(pcm) / (RATE * 2) * 0.2:
+                return None
+            return transcribe_pcm(pcm, beam=1, hint="Hey Void.")
+        except Exception as e:  # noqa: BLE001
+            print(f"[void] wake word stt: {e}", file=sys.stderr)
+            return None
+
     @classmethod
-    def check(cls, pcm, started):
+    def check(cls, pcm, started, text=None):
         # started after he finished talking, inside the follow-up window → it's a request, no "hey Void" needed
         follow = not cls.speaking() and cls.follow_from <= started < cls.follow_until and not ST.lock.locked()
         if not cls.speaking():                   # (while he talks the mic also hears him: don't tune to his voice)
@@ -1566,7 +1593,8 @@ class Wake:
             ss = speech_seconds(pcm)
             if ss < 0.25 or ss < len(pcm) / (RATE * 2) * 0.2:    # music or noise, not talking: don't let Whisper dream up words
                 return
-            text = transcribe_pcm(pcm) if follow else transcribe_pcm(pcm, beam=1, hint="Hey Void.")
+            if text is None:
+                text = transcribe_pcm(pcm) if follow else transcribe_pcm(pcm, beam=1, hint="Hey Void.")
         except Exception as e:  # noqa: BLE001
             print(f"[void] wake word stt: {e}", file=sys.stderr)
             return
