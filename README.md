@@ -47,6 +47,8 @@ Void is a little orb that floats on your desktop. Tell him what you want, and he
 > **You need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) first.** Install it, then run `claude` once in a
 > terminal to sign in. Void is the voice and face; Claude Code does the work.
 
+> **On a Mac?** You're in the right place: this `macos` branch of [ohshitgorillas/void](https://github.com/ohshitgorillas/void/tree/macos) is the Mac version. Jump to [macOS](#macos).
+
 <table>
 <tr>
 <th width="50%"><img src="https://img.shields.io/badge/Windows_10_%2F_11-0078D4?style=flat-square&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40IDkuOCAydjkuNEgwem0xMC45LTEuNkwyNCAwdjExLjNIMTAuOXpNMCAxMi42aDkuOFYyMkwwIDIwLjZ6bTEwLjkgMEgyNFYyNGwtMTMuMS0xLjh6Ii8%2BPC9zdmc%2B" alt="Windows 10 / 11"></th>
@@ -123,6 +125,26 @@ It gets the system packages for you (pacman, apt or dnf) and updates itself with
 </td>
 </tr>
 </table>
+
+### macOS
+
+<img src="https://img.shields.io/badge/macOS-Apple_Silicon-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS on Apple Silicon">
+
+The Mac version lives on the `macos` branch of [ohshitgorillas/void](https://github.com/ohshitgorillas/void/tree/macos), a fork of Void kept up to date with the main project. It is built and tested on macOS by the fork's maintainer; the main project's author doesn't have a Mac and can't vouch for it.
+
+**The app.** Download **Void.dmg** from the [fork's latest release](https://github.com/ohshitgorillas/void/releases/latest), open it and drag **Void** into Applications. It's for Apple Silicon Macs (M1 or newer).
+
+<sub>The app isn't notarized by Apple, so the first launch is blocked. Open <b>System Settings → Privacy & Security</b>, scroll down and click <b>Open Anyway</b> next to Void. macOS then asks to let him use the microphone: say yes.</sub>
+
+**Or from source.**
+
+```bash
+git clone -b macos https://github.com/ohshitgorillas/void.git
+cd void && ./install.sh
+void
+```
+
+No system packages needed: his window, mic and speakers all come from PyPI. When macOS asks to let your terminal use the microphone or record the screen, say yes. `git pull` on the `macos` branch updates him.
 
 ## Your first two minutes
 
