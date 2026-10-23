@@ -1526,7 +1526,8 @@ class Wake:
                             cls.check(bytes(seg), started)
                         in_speech, seg, cls.follow_until = False, bytearray(), 0.0
                     # you started talking inside the follow-up window: show him hearing you, ring/eyes move with your voice
-                    fol = cls.window_open()               # shown the moment the window opens, so you know when to talk
+                    fol = cls.window_open() or (in_speech and req and not cls.speaking())   # (and stays shown while
+                    # you're still saying something you started inside it, even past the window's end)
                     if fol != cls.follow_on:
                         cls.follow_on = fol
                         BUS.pub(t="follow", on=fol)
@@ -1599,6 +1600,9 @@ class Wake:
             print(f"[void] wake word stt: {e}", file=sys.stderr)
             return
         m = WAKE_RE.match(text or "")
+        print(f"[void] heard {len(pcm) / (RATE * 2):.1f}s, {len((text or '').split())} words"
+              f"{', follow-up' if follow else ''}{', wake word' if m else ''}{', while talking' if cls.speaking() else ''}",
+              file=sys.stderr)
         if cls.speaking():
             if STOP_RE.fullmatch((text or "").strip(" .,!?").lower()) or m:
                 BUS.pub(t="barge", listen=bool(m), text=(m.group(2).strip(" .,!?") if m else ""))
