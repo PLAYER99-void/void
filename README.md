@@ -80,12 +80,14 @@ Void is a little orb that floats on your desktop. Tell him what you want, and he
 curl -fsSL https://raw.githubusercontent.com/PLAYER99-void/void/main/get.sh | bash
 ```
 
+<details>
+<summary><b>What that line does, and other ways to install</b></summary>
+
 It picks the right package for your system, downloads and installs it with everything it needs, sets up his
 voice and hearing, and starts him. On a distro without a package, it gets the source and installs that instead.
 **Update now** in his settings keeps him current either way.
 
-<details>
-<summary><b>Or download a package yourself</b> (.deb · .rpm · Arch)</summary>
+**Or download a package yourself** (.deb · .rpm · Arch)
 
 <p align="center">
 <a href="https://github.com/PLAYER99-void/void/releases/latest"><img src="https://img.shields.io/badge/Ubuntu_%2F_Debian-.deb-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download the .deb for Ubuntu and Debian"></a><br>
@@ -103,10 +105,7 @@ Download the one for your distro from the [latest release](https://github.com/PL
 
 Then `void setup` once (his voice and hearing) and `void`.
 
-</details>
-
-<details>
-<summary><b>Or from source</b> (git clone)</summary>
+**Or from source** (git clone)
 
 ```bash
 git clone https://github.com/PLAYER99-void/void.git
@@ -116,13 +115,22 @@ void
 
 It gets the system packages for you (pacman, apt or dnf) and updates itself with `git pull`.
 
-</details>
-
 <sub>Gentoo or system-wide? See the <a href="docs/GUIDE.md#install-from-source">guide</a>.</sub>
+
+</details>
 
 </td>
 </tr>
 </table>
+
+### macOS
+
+<p align="center"><img src="https://img.shields.io/badge/-macOS-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS"></p>
+
+> [!NOTE]
+> The Mac version lives on the [`macos` branch of `ohshitgorillas/void`](https://github.com/ohshitgorillas/void/tree/macos),
+> a fork of Void kept up to date with the main project. It is built and tested on macOS by the fork's maintainer; the
+> main project's author doesn't have a Mac and can't vouch for it.
 
 ## Your first two minutes
 
