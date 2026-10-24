@@ -19,11 +19,14 @@ class Inbox(unittest.TestCase):
         self.messages = []
         self.history = []
         self.replies = []
+        self.during = []
         self.lock = threading.Lock()
         for patch in (
             mock.patch.object(server.ST, "lock", self.lock),
             mock.patch.object(server.ST, "auto_pick", ""),
             mock.patch.object(server.ST, "stopped", False),
+            mock.patch.object(server.ST, "alerting", False),
+            mock.patch.object(server.ST, "compacting", False),
             mock.patch.object(server.ST, "last_worked", False),
             mock.patch.dict(server.CFG, {"long_lived": True, "auto_compact": False}),
             mock.patch.dict(server.LONG, {"ok": True}),
@@ -41,6 +44,7 @@ class Inbox(unittest.TestCase):
         self.assertEqual(launch["session"], "existing-session")
         self.assertTrue(self.lock.locked())
         self.messages.append(prompt)
+        self.during.append((server.ST.alerting, server.lock_wait()))
         emit(t="result", text="Alert received", is_error=False)
 
     def append(self, text):
@@ -53,11 +57,14 @@ class Inbox(unittest.TestCase):
         self.addCleanup(follower.close)
         return follower
 
+    def followups(self):
+        return [ev for ev in self.replies if ev["t"] == "followup"]
+
     def wait_for_replies(self, count):
         until = time.monotonic() + 3
-        while len(self.replies) < count and time.monotonic() < until:
+        while len(self.followups()) < count and time.monotonic() < until:
             time.sleep(0.01)
-        self.assertEqual(len(self.replies), count)
+        self.assertEqual(len(self.followups()), count)
 
     def test_appended_alerts_reach_session_in_order_after_busy_and_skip_own_stop(self):
         self.append("2026-10-23 10:00:00 [worker] old alert\n")
@@ -76,7 +83,20 @@ class Inbox(unittest.TestCase):
         follower.close()
         self.assertEqual(self.messages, [first, second, third])
         self.assertEqual([rec["you"] for rec in self.history], self.messages)
-        self.assertTrue(all(ev == {"t": "followup", "text": "Alert received", "ok": True} for ev in self.replies))
+        self.assertTrue(all(ev == {"t": "followup", "text": "Alert received", "ok": True} for ev in self.followups()))
+
+    def test_your_message_waits_for_an_alert_and_he_shows_he_is_on_it(self):
+        follower = self.start()
+        self.assertEqual(server.lock_wait(), 0)          # his own answer to you: a second message is refused
+        self.append("2026-10-23 10:01:00 [worker] done\n")
+        self.wait_for_replies(1)
+        follower.close()
+        alerting, wait = self.during[0]
+        self.assertTrue(alerting)
+        self.assertGreater(wait, 0)
+        self.assertEqual([ev["t"] for ev in self.replies], ["followup_soon", "followup"])
+        self.assertFalse(server.ST.alerting)
+        self.assertEqual(server.lock_wait(), 0)
 
     def test_missing_inbox_and_partial_line(self):
         follower = self.start()

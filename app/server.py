@@ -274,6 +274,7 @@ class State:
         self.notes = s.get("notes") or ""          # the handoff note written when the context was compacted
         self.ctx_used, self.ctx_max = int(s.get("ctx_used") or 0), int(s.get("ctx_max") or 200000)
         self.compacting = False
+        self.alerting = False                      # answering an inbox alert (the page only sees "thinking")
         self.auto_pick = ""
         self.last_worked = False                   # did the last answer use tools? then a short "yes" is still work
 
@@ -3237,6 +3238,12 @@ def session_message(said, prompt, send_ev, *, extra="", follow=False, attach=Non
     return rec
 
 
+def lock_wait():
+    """How long your message waits for the session: tidying notes or an inbox alert finishes first (you didn't start
+    either, so don't refuse); while he's on your own last message it's refused at once."""
+    return 180 if ST.compacting else 600 if ST.alerting else 0
+
+
 class InboxFollower:
     """Tail alerts from this run only; the unread file queues them while Claude is busy."""
     def __init__(self, path=None):
@@ -3294,10 +3301,13 @@ class InboxFollower:
             try:
                 if self.stop.is_set():
                     return
+                ST.alerting = True
+                BUS.pub(t="followup_soon", id="inbox")   # (otherwise he looks idle while your messages wait)
                 rec = session_message(line, line, lambda ev: None)
                 if rec:
                     BUS.pub(t="followup", text=rec["him"], ok=rec["ok"])
             finally:
+                ST.alerting = False
                 ST.lock.release()
             if CFG.get("auto_compact", True) and ST.ctx_used >= ctx_scale() * float(CFG.get("compact_at") or 0.7):
                 auto_compact()
@@ -3734,7 +3744,7 @@ class Handler(BaseHTTPRequestHandler):
             prompt = FOLLOW_NOTE + said
         if not prompt:
             return self._json({"error": "empty prompt"}, 400)
-        if not ST.lock.acquire(timeout=180 if ST.compacting else 0):    # (tidying its notes: wait, don't refuse)
+        if not ST.lock.acquire(timeout=lock_wait()):
             return self._json({"error": "still working on the last one"}, 409)
         try:
             self.send_response(200)
