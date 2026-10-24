@@ -3152,6 +3152,171 @@ CTYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css":
           ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json"}
 
 
+def session_message(said, prompt, send_ev, *, extra="", follow=False, attach=None):
+    """Run a message through the voice session path. The caller holds ST.lock."""
+    ST.auto_pick = pick_auto(said, extra, follow)
+    rec = {"ts": int(time.time()), "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd), "you": said or "(attachment)",
+           "him": "", "tools": [], "ok": True,
+           "attach": [a.get("label") for a in attach or [] if isinstance(a, dict)]}
+
+    # a follow-up: hold back his first words until we know it isn't "[ignore]"
+    gate = {"open": not follow, "held": [], "text": "", "ignored": False}
+
+    def emit(**kw):
+        if not gate["open"]:
+            t = kw.get("t")
+            if t in ("delta", "result"):
+                gate["text"] += kw.get("text", "") if t == "delta" else ("" if gate["text"] else kw.get("text", ""))
+            said_so_far = gate["text"].strip().lower()
+            if said_so_far.startswith(IGNORE):                   # not meant for him: drop the whole reply
+                gate["open"] = gate["ignored"] = True
+                return send_ev({"t": "ignored"})
+            if t == "delta" and IGNORE.startswith(said_so_far):    # could still turn into "[ignore]"
+                gate["held"].append(kw)
+                return
+            if t in ("delta", "tool", "result", "error", "stopped"):  # it's a real answer: let it all through
+                gate["open"] = True
+                for h in gate["held"]:
+                    real_emit(**h)
+                gate["held"].clear()
+            else:
+                gate["held"].append(kw)
+                return
+        if gate["ignored"]:
+            return
+        real_emit(**kw)
+
+    def real_emit(**kw):
+        t = kw.get("t")
+        if t == "delta":
+            rec["him"] += kw.get("text", "")
+        elif t == "break" and rec["him"] and not rec["him"].endswith("\n\n"):
+            rec["him"] += "\n\n"
+        elif t == "tool" and len(rec["tools"]) < 30:
+            rec["tools"].append(kw.get("name"))
+            if kw.get("name") in recall.EDIT_TOOLS and kw.get("detail"):
+                rec.setdefault("files", []).append(os.path.basename(kw["detail"].rstrip("…")))
+        elif t == "result":
+            if not rec["him"].strip() and kw.get("text"):
+                rec["him"] = kw["text"]
+            rec["ok"] = not kw.get("is_error")
+        elif t == "error":
+            rec["ok"] = False
+            rec["him"] = rec["him"] or kw.get("text", "")
+        send_ev(kw)
+
+    ST.stopped = False
+    partial = bool(CFG["partial_messages"])
+    for _ in range(3):
+        binary = claude_bin() if CFG.get("long_lived", True) and LONG["ok"] else None
+        r = BRAIN.ask(brain_launch(binary, partial), prompt, emit) if binary else run_claude(prompt, emit, partial)
+        if r == "unsupported":             # an older Claude Code: one process per message, like before
+            LONG["ok"] = False
+            continue
+        if r == "retry_nopartial":
+            partial = False
+            continue
+        if r == "retry_fresh":
+            end_chat()
+            ST.session, ST.ctx_used = None, 0
+            ST.save()
+            emit(t="note", text="previous session couldn't be resumed — started fresh")
+            continue
+        break
+    if gate["ignored"]:
+        return None
+    rec["session"] = ST.session
+    rec["him"] = untag(rec["him"]).strip()[-6000:]
+    try:
+        ST.last_worked = bool(rec["tools"])
+        hist_add(rec)
+        recall.add(rec)
+    except Exception as e:  # noqa: BLE001  (a notes problem must never break an answer)
+        print(f"[void] history/quick memory: {e}", file=sys.stderr)
+    emit(t="done")
+    return rec
+
+
+class InboxFollower:
+    """Tail alerts from this run only; the unread file queues them while Claude is busy."""
+    def __init__(self, path=None):
+        self.path = Path(path) if path is not None else Path.home() / ".local/share/void-watch/inbox.log"
+        self.offset = 0
+        self.pending = b""
+        self.identity = None
+        self.discard = False
+        try:
+            with self.path.open("rb") as f:
+                st = os.fstat(f.fileno())
+                self.identity = (st.st_dev, st.st_ino)
+                self.offset = f.seek(0, os.SEEK_END)
+                if self.offset:
+                    f.seek(-1, os.SEEK_END)
+                    self.discard = f.read(1) != b"\n"
+        except OSError:
+            pass                            # claude-ping may create the inbox later
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=1)
+
+    def read_lines(self):
+        with self.path.open("rb") as f:
+            st = os.fstat(f.fileno())
+            identity = (st.st_dev, st.st_ino)
+            if identity != self.identity or st.st_size < self.offset:
+                self.offset, self.pending, self.discard = 0, b"", False
+            self.identity = identity
+            f.seek(self.offset)
+            data = f.read()
+            self.offset = f.tell()
+        lines = (self.pending + data).split(b"\n")
+        self.pending = lines.pop()
+        for raw in lines:
+            if self.discard:
+                self.discard = False
+                continue
+            line = raw.decode("utf-8", errors="replace").rstrip("\r")
+            if not line or re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[claude\] atom Stop", line):
+                continue
+            yield line
+
+    def deliver(self, line):
+        while not self.stop.is_set():
+            if not ST.lock.acquire(timeout=0.2):
+                continue
+            try:
+                if self.stop.is_set():
+                    return
+                rec = session_message(line, line, lambda ev: None)
+                if rec:
+                    BUS.pub(t="followup", text=rec["him"], ok=rec["ok"])
+            finally:
+                ST.lock.release()
+            if CFG.get("auto_compact", True) and ST.ctx_used >= ctx_scale() * float(CFG.get("compact_at") or 0.7):
+                auto_compact()
+            return
+
+    def run(self):
+        while not self.stop.is_set():
+            try:
+                for line in self.read_lines():
+                    if self.stop.is_set():
+                        return
+                    self.deliver(line)
+            except FileNotFoundError:
+                pass
+            except Exception as e:  # noqa: BLE001
+                print(f"[void] inbox: {e}", file=sys.stderr)
+            self.stop.wait(0.25)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "Void"
 
@@ -3569,7 +3734,6 @@ class Handler(BaseHTTPRequestHandler):
             prompt = FOLLOW_NOTE + said
         if not prompt:
             return self._json({"error": "empty prompt"}, 400)
-        ST.auto_pick = pick_auto(said, extra, follow)
         if not ST.lock.acquire(timeout=180 if ST.compacting else 0):    # (tidying its notes: wait, don't refuse)
             return self._json({"error": "still working on the last one"}, 409)
         try:
@@ -3579,61 +3743,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             alive = [True]
 
-            rec = {"ts": int(time.time()), "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd), "you": said or "(attachment)",
-                   "him": "", "tools": [], "ok": True,
-                   "attach": [a.get("label") for a in body.get("attach") or [] if isinstance(a, dict)]}
-
-            # a follow-up: hold back his first words until we know it isn't "[ignore]"
-            gate = {"open": not follow, "held": [], "text": "", "ignored": False}
-
-            def emit(**kw):
-                if not gate["open"]:
-                    t = kw.get("t")
-                    if t in ("delta", "result"):
-                        gate["text"] += kw.get("text", "") if t == "delta" else ("" if gate["text"] else kw.get("text", ""))
-                    said_so_far = gate["text"].strip().lower()
-                    if said_so_far.startswith(IGNORE):                   # not meant for him: drop the whole reply
-                        gate["open"] = gate["ignored"] = True
-                        return send_ev({"t": "ignored"})
-                    if t == "delta" and IGNORE.startswith(said_so_far):    # could still turn into "[ignore]"
-                        gate["held"].append(kw)
-                        return
-                    if t in ("delta", "tool", "result", "error", "stopped"):  # it's a real answer: let it all through
-                        gate["open"] = True
-                        for h in gate["held"]:
-                            real_emit(**h)
-                        gate["held"].clear()
-                    else:
-                        gate["held"].append(kw)
-                        return
-                if gate["ignored"]:
-                    return
-                real_emit(**kw)
-
             def send_ev(kw):
-                try:
-                    self.wfile.write(b"data: " + json.dumps(kw).encode() + b"\n\n")
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    alive[0] = False
-
-            def real_emit(**kw):
-                t = kw.get("t")
-                if t == "delta":
-                    rec["him"] += kw.get("text", "")
-                elif t == "break" and rec["him"] and not rec["him"].endswith("\n\n"):
-                    rec["him"] += "\n\n"
-                elif t == "tool" and len(rec["tools"]) < 30:
-                    rec["tools"].append(kw.get("name"))
-                    if kw.get("name") in recall.EDIT_TOOLS and kw.get("detail"):
-                        rec.setdefault("files", []).append(os.path.basename(kw["detail"].rstrip("…")))
-                elif t == "result":
-                    if not rec["him"].strip() and kw.get("text"):
-                        rec["him"] = kw["text"]
-                    rec["ok"] = not kw.get("is_error")
-                elif t == "error":
-                    rec["ok"] = False
-                    rec["him"] = rec["him"] or kw.get("text", "")
                 if not alive[0]:
                     return
                 try:
@@ -3643,35 +3753,8 @@ class Handler(BaseHTTPRequestHandler):
                     alive[0] = False
                     stop_proc()
 
-            ST.stopped = False
-            partial = bool(CFG["partial_messages"])
-            for _ in range(3):
-                binary = claude_bin() if CFG.get("long_lived", True) and LONG["ok"] else None
-                r = BRAIN.ask(brain_launch(binary, partial), prompt, emit) if binary else run_claude(prompt, emit, partial)
-                if r == "unsupported":             # an older Claude Code: one process per message, like before
-                    LONG["ok"] = False
-                    continue
-                if r == "retry_nopartial":
-                    partial = False
-                    continue
-                if r == "retry_fresh":
-                    end_chat()
-                    ST.session, ST.ctx_used = None, 0
-                    ST.save()
-                    emit(t="note", text="previous session couldn't be resumed — started fresh")
-                    continue
-                break
-            if gate["ignored"]:
+            if session_message(said, prompt, send_ev, extra=extra, follow=follow, attach=body.get("attach")) is None:
                 return
-            rec["session"] = ST.session
-            rec["him"] = untag(rec["him"]).strip()[-6000:]
-            try:
-                ST.last_worked = bool(rec["tools"])
-                hist_add(rec)
-                recall.add(rec)
-            except Exception as e:  # noqa: BLE001  (a notes problem must never break an answer)
-                print(f"[void] history/quick memory: {e}", file=sys.stderr)
-            emit(t="done")
         finally:
             ST.lock.release()
         if CFG.get("auto_compact", True) and ST.ctx_used >= ctx_scale() * float(CFG.get("compact_at") or 0.7):
@@ -3746,6 +3829,7 @@ def main():
     if args.print_port:
         print(CFG["port"])
         return
+    inbox = InboxFollower()                 # capture EOF before starting any background work
     if CFG["stt_prewarm"] or CFG.get("wake_word"):
         threading.Thread(target=lambda: _try(whisper), daemon=True).start()
     _wire_quick()
@@ -3763,10 +3847,12 @@ def main():
     except OSError:
         pass
     srv.daemon_threads = True
+    inbox.start()
 
     def bye(*_):
         raise SystemExit(0)                    # (→ atexit below)
     atexit.register(lambda: (end_chat(wait=True), ST.proc and agents.kill_tree(ST.proc, grace=0.5)))
+    atexit.register(inbox.close)
     for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)):
         if sig is not None:
             try:
@@ -3778,6 +3864,8 @@ def main():
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        inbox.close()
 
 
 def _try(fn):
