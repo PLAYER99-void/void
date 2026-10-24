@@ -406,7 +406,10 @@ class VoidWindow(QWidget):
                 self.rects = None
             return
         if msg == "reauth":                                              # the server restarted: hand over its new token
-            self.view.load(QUrl(self._authed_url()))
+            # (a new query too: a change after '#' alone is an in-page jump, so the page would keep its dead token)
+            base, _, tok = self._authed_url().partition("#")
+            base += ("&" if "?" in base else "?") + f"r={time.time_ns()}"
+            self.view.load(QUrl(base + ("#" + tok if tok else "")))
             return
         if msg.startswith("ptt:"):
             self.ptt = parse_combo(msg[4:])
