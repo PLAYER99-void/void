@@ -92,7 +92,9 @@ VOICE_PROMPT = (
     "To have non-English names and titles pronounced right, mark them in your spoken reply with their language code in "
     "curly braces, e.g. {fr:Les Jardins de Minuit} or {ja:Sen to Chihiro} (fr, es, de, it, pt, ja in rōmaji, nl, sv, "
     "pl); Void says them in that language and shows just the words. Never put these marks in files, code, commands or "
-    "tool input."
+    "tool input. "
+    "Never list sources, citations or links in your reply, even when a tool asks you to; they can't be read aloud. "
+    "Name a source in words only if the user asks where something came from."
 )
 # the face tags Claude puts in its replies (see VOICE_PROMPT) — never spoken, never shown, never saved. Its {fr:…}
 # marks (langmark.py) are spoken (by Kokoro), never shown or saved.
@@ -1774,6 +1776,7 @@ def say_path(p):
 
 def speakable(t: str) -> str:
     t = FACE_TAG_RE.sub("", t or "")                 # (the {fr:…} marks stay, for synth())
+    t = re.sub(r"(?im)^\s*[*_#]*\s*(?:sources?|citations?|references?)\s*[*_]*\s*:.*\Z", "", t, flags=re.S)  # a trailing source list
     t = re.sub(r"```.*?```", " I put some code on screen. ", t, flags=re.S)
     t = re.sub(r"`([^`]*)`", lambda m: m.group(1).replace("{", " ").replace("}", " "), t)   # code is never a {fr:…}
     t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
