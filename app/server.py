@@ -1377,7 +1377,12 @@ class Listen:
         if clipped > RATE * 0.05:
             emit(t="note", text="your mic is clipping (too loud) — turn the input down to ~65% for better recognition")
         emit(t="transcribing")
-        emit(t="text", text=transcribe_pcm(bytes(pcm)))
+        text = transcribe_pcm(bytes(pcm))
+        if is_echo(text):                        # (his own voice through the mic, not you)
+            print(f"[void] dropped echo of own speech: {text.strip()[:80]}", file=sys.stderr)
+            emit(t="cancel", why="echo")
+            return
+        emit(t="text", text=text)
 
 
 def reset_whisper():
@@ -1409,6 +1414,33 @@ FOLLOW_NOTE = ("(Voice note from Void: the mic picked this up a few seconds afte
                "If it is clearly not meant for you, e.g. the user thinking out loud, talking to themselves or to someone "
                "else, reply with exactly [ignore] and nothing else, and use no tools. Otherwise just answer it normally.)\n\n")
 IGNORE = "[ignore]"
+ECHO_TAIL = 1.0          # s after he stops talking that the room still rings: a burst starting before then is his own voice
+ECHO_KEEP, ECHO_RATIO, ECHO_MIN = 60, 0.6, 3     # remember what he said for 60 s · share of heard words in his order · fewest words to judge
+SPOKEN = collections.deque(maxlen=200)           # (monotonic time, text) of what he said lately
+
+
+def note_spoken(text):
+    SPOKEN.append((time.monotonic(), langmark.unmark(text)))
+
+
+def is_echo(heard):
+    """The mic caught his own voice: most of the heard words are, in order, a stretch of something he said lately."""
+    h = re.findall(r"[^\W_]+", (heard or "").lower())
+    if len(h) < ECHO_MIN:
+        return False
+    now = time.monotonic()
+    while SPOKEN and now - SPOKEN[0][0] > ECHO_KEEP:
+        SPOKEN.popleft()
+    for _t, said in list(SPOKEN):
+        s = re.findall(r"[^\W_]+", said.lower())
+        row = [0] * (len(s) + 1)             # longest common subsequence of the words
+        for w in h:
+            prev, row = row, [0]
+            for j, x in enumerate(s):
+                row.append(prev[j] + 1 if w == x else max(prev[j + 1], row[j]))
+        if row[-1] >= ECHO_RATIO * len(h):
+            return True
+    return False
 
 # what the speech model "hears" in background noise — never treat these as a follow-up request
 NOISE_WORDS = {"you", "thank you", "thanks", "bye", "thanks for watching", "thank you for watching", "uh", "um", "hmm"}
@@ -1446,10 +1478,10 @@ class Wake:
 
     @classmethod
     def talking_until(cls, end):
-        """He's talking until `end`; the follow-up window opens just before that, so a quick answer isn't lost."""
+        """He's talking until `end`; the follow-up window opens once his echo has died away (ECHO_TAIL)."""
         cls.speaking_until = end
-        cls.follow_from = end - 0.15
-        cls.follow_until = end + float(CFG.get("follow_up") or 0)
+        cls.follow_from = end + ECHO_TAIL      # (not before the room has stopped ringing with his voice)
+        cls.follow_until = cls.follow_from + float(CFG.get("follow_up") or 0)
         cls.nudge()
 
     @classmethod
@@ -1478,7 +1510,7 @@ class Wake:
             return False
         if cls.speaking():                       # while he talks: only to catch "stop" / "hey Void" (barge-in)
             return bool(CFG.get("barge_in"))
-        return bool(CFG.get("wake_word")) or time.monotonic() < cls.follow_until
+        return bool(CFG.get("wake_word")) or cls.follow_from <= time.monotonic() < cls.follow_until
 
     @classmethod
     def loop(cls):
@@ -1591,6 +1623,9 @@ class Wake:
     def check(cls, pcm, started, text=None):
         # started after he finished talking, inside the follow-up window → it's a request, no "hey Void" needed
         follow = not cls.speaking() and cls.follow_from <= started < cls.follow_until and not ST.lock.locked()
+        if not cls.speaking() and started < cls.speaking_until + ECHO_TAIL:    # began while he talked / in the echo: his voice
+            print("[void] ignored while talking", file=sys.stderr)
+            return
         if not cls.speaking():                   # (while he talks the mic also hears him: don't tune to his voice)
             MicAuto.learn(pcm)
         try:
@@ -1606,6 +1641,9 @@ class Wake:
         print(f"[void] heard {len(pcm) / (RATE * 2):.1f}s, {len((text or '').split())} words"
               f"{', follow-up' if follow else ''}{', wake word' if m else ''}{', while talking' if cls.speaking() else ''}",
               file=sys.stderr)
+        if is_echo(text):
+            print(f"[void] dropped echo of own speech: {text.strip()[:80]}", file=sys.stderr)
+            return
         if cls.speaking():
             if STOP_RE.fullmatch((text or "").strip(" .,!?").lower()) or m:
                 BUS.pub(t="barge", listen=bool(m), text=(m.group(2).strip(" .,!?") if m else ""))
@@ -2136,6 +2174,7 @@ class Speaker:
         with cls.cv:
             if epoch is not None and epoch < cls.epoch:      # sent before you cut him off, arrived after
                 return
+            note_spoken(text)
             cls.todo.append((cls.gen, sid, text))
             if all(isinstance(x[1], int) for x in cls.todo):     # sentences can arrive out of order: play them in order
                 cls.todo.sort(key=lambda x: (x[0], x[1]))
@@ -3398,6 +3437,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_response(204)
                     self.end_headers()
                     return None
+                note_spoken(text)
                 audio, rate = synth(text)
                 audio, words = tidy_and_time(audio, langmark.unmark(text))
                 pause = 0.3 if re.search(r"[.!?]['\")}]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
