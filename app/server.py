@@ -2255,9 +2255,10 @@ class Speaker:
         return cls.proc
 
     @classmethod
-    def _write(cls, data, g):
+    def _write(cls, data, g, again=True):
         """Stream raw samples, keeping LEAD seconds buffered. If we were ever late (the speakers ran dry) count it and
-        move the clock on, so the start times we tell the page stay true."""
+        move the clock on, so the start times we tell the page stay true. If the player ends mid-way (you picked other
+        speakers) a new one carries on, from what the old one still had queued and so never played."""
         step = max(2, int(cls.prate * 0.02)) * 2
         for i in range(0, len(data), step):
             while True:
@@ -2282,7 +2283,15 @@ class Speaker:
                 cls.proc.stdin.write(data[i:i + step])
                 cls.proc.stdin.flush()
             except (BrokenPipeError, OSError, AttributeError):
-                return False
+                if not again or g != cls.gen or cls.proc is None:
+                    return False
+                back = int(max(0.0, ahead) * cls.prate) * 2
+                try:
+                    cls._player(cls.prate)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[void] audio player: {e}", file=sys.stderr)
+                    return False
+                return cls._write(data[max(0, i - back):], g, again=False)
             cls.written += len(data[i:i + step]) // 2
         return True
 

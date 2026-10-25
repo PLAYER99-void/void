@@ -66,6 +66,7 @@ def dpi_aware():
 devices = None      # () → anything that changes when the default output / input or the device list does (macsys sets
 #                     it: Core Audio's own). None: can't tell (Windows), so only a dead stream starts PortAudio over
 STALL = 1.5         # seconds without a callback: that stream's device has gone
+RECHECK = 0.25      # how often a Player that's being fed asks whether another output has become the default
 LOCK_WAIT = 0.25    # how long a question about the devices waits for _PA.lock (a stream's open may sit on a permission prompt)
 FIRST = 1.0         # how long a new stream gets to call back the first time
 
@@ -334,7 +335,7 @@ class Player:
     def __init__(self, rate):
         import sounddevice as sd
         self.buf, self.lock, self.alive = bytearray(), threading.Lock(), True
-        self.ran, self.first = 0.0, threading.Event()
+        self.ran, self.first, self.asked = 0.0, threading.Event(), time.monotonic()
 
         def cb(outdata, frames, t, status):
             self.ran = time.monotonic()
@@ -352,9 +353,15 @@ class Player:
         self.stdin = self
 
     def write(self, data):
-        if not _ok(self):
+        """Also asks every RECHECK s whether you've picked other speakers: then it ends mid-sentence, and the Speaker
+        carries on from there on the new ones (Core Audio keeps a stream on the device it opened on)."""
+        now = time.monotonic()
+        moved = now - self.asked >= RECHECK and _sig() != _PA.sig
+        if moved or not _ok(self):
             self.kill()
-            raise BrokenPipeError("the speakers have gone")
+            raise BrokenPipeError("the speakers have changed" if moved else "the speakers have gone")
+        if now - self.asked >= RECHECK:
+            self.asked = now
         with self.lock:
             self.buf += data
 

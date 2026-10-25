@@ -6,6 +6,7 @@ sounddevice (no real audio, nothing audible).
 import json
 import subprocess
 import sys
+import time
 import types
 import unittest
 from pathlib import Path
@@ -246,6 +247,26 @@ class MacLike(Base):
         winsys.Player(22050)
         self.assertEqual(self.sd.terms, 2)
         self.assertEqual(self.sd.made[-1].device, "AirPods")
+
+    def test_feeding_a_player_follows_a_new_default_output(self):
+        p = winsys.Player(22050)
+        self.plug("AirPods", "out")
+        p.asked = time.monotonic()                         # (asked just now: not again before RECHECK)
+        p.stdin.write(b"\0\0")
+        self.assertTrue(p.alive)
+        p.asked -= winsys.RECHECK + 0.01
+        with self.assertRaises(BrokenPipeError):           # the Speaker opens a new player and carries on there
+            p.stdin.write(b"\0\0")
+        self.assertEqual(p.poll(), 0)
+        winsys.Player(22050)
+        self.assertEqual(self.sd.made[-1].device, "AirPods")
+
+    def test_feeding_a_player_with_no_change_goes_on(self):
+        p = winsys.Player(22050)
+        p.asked -= winsys.RECHECK + 0.01
+        p.stdin.write(b"\0\0")
+        self.assertTrue(p.alive)
+        self.assertGreater(p.asked, time.monotonic() - winsys.RECHECK)
 
     def test_restart_closes_open_streams_first(self):
         wake, p = winsys.Mic(16000), winsys.Player(22050)
