@@ -43,12 +43,14 @@ URL = f"http://127.0.0.1:{port()}/"
 
 
 def up():
-    import urllib.error
+    """OUR server answers: its run id is the one in our runtime.json (another Void on the same port has its own, so we
+    never attach to it). A runtime.json with no id was written by an older server of ours, still running from before an
+    update: that one's ours."""
     try:
-        urllib.request.urlopen(URL + "api/state", timeout=1)
-        return True
-    except urllib.error.HTTPError:                                 # it answered: it's running
-        return True
+        rid = json.loads((DATA / "runtime.json").read_text()).get("id")
+        if rid is None:                            # (an older server has no /api/id: any answer will do)
+            return bool(urllib.request.urlopen(URL + "api/state", timeout=1))
+        return json.load(urllib.request.urlopen(URL + "api/id", timeout=1)).get("id") == rid
     except Exception:  # noqa: BLE001
         return False
 

@@ -21,7 +21,9 @@ def main():
         return 0
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/api/approve",
-        data=json.dumps({"tool": d.get("tool_name") or "?", "input": d.get("tool_input") or {}}).encode(),
+        # agent_id / agent_type: only there when one of his subagents is asking (the card says which one)
+        data=json.dumps({"tool": d.get("tool_name") or "?", "input": d.get("tool_input") or {},
+                         "agent_id": d.get("agent_id"), "agent_type": d.get("agent_type")}).encode(),
         headers={"Content-Type": "application/json", "X-Void-Token": tok})
     try:
         r = json.load(urllib.request.urlopen(req, timeout=900))

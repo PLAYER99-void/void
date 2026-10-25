@@ -24,6 +24,9 @@ ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/void"
 SHARE="$(cd "$(dirname "$(readlink -f "$0")")/../share/void" 2>/dev/null && pwd || true)"
 if [ -d "$ROOT/app" ] || [ -z "$SHARE" ] || [ ! -d "$SHARE/app" ]; then APP="$ROOT/app"; else APP="$SHARE/app"; fi
 PY="$ROOT/venv/bin/python"; LOG="$ROOT/server.log"
+MAC=0; [ "$(uname -s)" = Darwin ] && MAC=1
+# start something in the background, in its own session (macOS has no setsid)
+detach(){ if command -v setsid >/dev/null 2>&1; then setsid -f "$@"; else nohup "$@" & fi; }
 # push-to-talk from a desktop key binding (one call on press, one on release): straight to the running window, fast
 case "${1:-}" in ptt-down|ptt-up)
   PSOCK="${XDG_RUNTIME_DIR:-/tmp}/void-$(id -u).sock"
@@ -42,12 +45,18 @@ if [ ! -x "$PY" ]; then
 fi
 PORT="$("$PY" "$APP/server.py" --print-port)"
 URL="http://127.0.0.1:$PORT/"
-up(){ curl -fs -o /dev/null "${URL}api/state"; }
+# up = OUR server answers: its run id (/api/id) is the one in our runtime.json (another Void on the same port has its own, so we never attach to it)
+# (a runtime.json with no id was written by an older server of ours, still running from before an update: that one's ours)
+up(){ [ -f "$ROOT/runtime.json" ] || return 1
+  ID="$(sed -n 's/.*"id": "\([0-9a-f]*\)".*/\1/p' "$ROOT/runtime.json")"
+  [ -n "$ID" ] || { curl -fs --max-time 2 -o /dev/null "${URL}api/state"; return; }   # (an older server has no /api/id)
+  case "$(curl -fs --max-time 2 "${URL}api/id")" in *"\"id\": \"$ID\""*) ;; *) return 1 ;; esac; }
 stop(){ pkill -f "$APP/server.py" >/dev/null 2>&1 || true; }
 
 # the old browser-window fallback (a normal app window) — always clean it up so it can't linger looking like Void
 killbrowser(){ pkill -f -- "--user-data-dir=$ROOT/browser" >/dev/null 2>&1 || true; }
 quitwin(){ pkill -f "$APP/window.py" >/dev/null 2>&1 || true; killbrowser
+  [ $MAC = 1 ] && { pkill -f "$APP/window_win.py" >/dev/null 2>&1 || true; }
   command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && { [ "$(hyprctl keyword cursor:invisible false 2>&1)" = ok ] || hyprctl eval 'hl.config({ cursor = { invisible = false } })' >/dev/null 2>&1; } || true; }
 
 case "${1:-}" in
@@ -56,6 +65,11 @@ case "${1:-}" in
   diagnostics) exec "$PY" "$APP/server.py" --diagnostics ;;
   see)     exec "$PY" "$APP/server.py" --see "${2:-window}" ;;            # view-only picture of your screen (for Claude)     # speak under heavy load, report any stutter
   doctor)  echo "── window ──"
+           if [ $MAC = 1 ]; then
+             "$PY" -c 'import PySide6.QtWebEngineWidgets' 2>/dev/null && echo "overlay: Qt window ready" || echo "overlay: PySide6 is missing (run ./install.sh again)"
+             pgrep -f "$APP/window_win.py" >/dev/null && echo "running: overlay window process" || echo "running: no window process"
+             echo "── voice & mic ──"; exec "$PY" "$APP/server.py" --doctor
+           fi
            for c in /usr/bin/python3 /usr/bin/python; do [ -x "$c" ] && { "$c" "$APP/window.py" --check 2>&1 | tail -n 3 || echo "overlay: window can't start (pacman -S python-gobject webkit2gtk-4.1 gtk-layer-shell)"; break; }; done
            echo "env: WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-unset} GDK_BACKEND=${GDK_BACKEND:-unset} XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset}"
            pgrep -f "$APP/window.py" >/dev/null && echo "running: overlay window process" || echo "running: no window process"
@@ -72,7 +86,7 @@ case "${1:-}" in
 esac
 
 if ! up; then
-  setsid -f "$PY" "$APP/server.py" >>"$LOG" 2>&1 </dev/null
+  detach "$PY" "$APP/server.py" >>"$LOG" 2>&1 </dev/null
   for _ in $(seq 60); do up && break; sleep 0.1; done
   up || { echo "server didn't start — see $LOG" >&2; exit 1; }
 fi
@@ -82,6 +96,14 @@ case "$CMD" in toggle|show|hide|quit|restart|listen|look|live|hover|hover-on|hov
   *) echo "usage: void [listen|look|live|hover|show|hide|quit|doctor|diagnostics|stress|render|stop|restart|log|server]" >&2; exit 2 ;; esac
 [ "$CMD" = restart ] && CMD=show
 FIRST="$CMD"; [ "$FIRST" = toggle ] && FIRST=show
+
+# macOS: the Qt window (the same one as on Windows), in Void's own Python
+if [ $MAC = 1 ]; then
+  if pgrep -f "$APP/window_win.py" >/dev/null 2>&1; then exec "$PY" "$APP/window_win.py" "${URL}?native=1" "$CMD"; fi
+  [ "$CMD" = hide ] || [ "$CMD" = quit ] && exit 0
+  detach "$PY" "$APP/window_win.py" "${URL}?native=1" "$FIRST" >>"$LOG" 2>&1 </dev/null
+  exit 0
+fi
 
 # Preferred: a native see-through window that's just the little guy (system python + GTK + WebKit).
 SOCK="${XDG_RUNTIME_DIR:-/tmp}/void-$(id -u).sock"

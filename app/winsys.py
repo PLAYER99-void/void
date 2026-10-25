@@ -4,6 +4,8 @@ clipboard, notifications, volume / media keys / brightness, opening apps, lockin
 On Linux, server.py and quick.py use command-line tools for these (parecord, paplay, grim, wl-paste, pactl, …);
 everything else in Void is the same on both.
 """
+import atexit
+import contextlib
 import ctypes
 import json
 import os
@@ -56,6 +58,145 @@ def dpi_aware():
             pass
 
 
+# ---------------------------------------------------------------- PortAudio's device list
+# PortAudio reads the list of speakers and mics once, when it starts, and keeps opening streams on what it read. After a
+# USB DAC is switched off and on, a sleep/wake, or a new default (an iPhone's mic turning up), that's a device that isn't
+# there any more: he goes quiet, with no error, until Void restarts. So PortAudio starts over before a stream opens when
+# the system's devices have changed since it last looked, or a stream has died or never ran — and never with one open.
+devices = None      # () → anything that changes when the default output / input or the device list does (macsys sets
+#                     it: Core Audio's own). None: can't tell (Windows), so only a dead stream starts PortAudio over
+STALL = 1.5         # seconds without a callback: that stream's device has gone
+RECHECK = 0.25      # how often a Player that's being fed asks whether another output has become the default
+LOCK_WAIT = 0.25    # how long a question about the devices waits for _PA.lock (a stream's open may sit on a permission prompt)
+FIRST = 1.0         # how long a new stream gets to call back the first time
+
+
+class _PA:
+    lock = threading.RLock()        # (held while a stream opens or closes, so PortAudio never restarts under one)
+    live = set()                    # the Players and Mics open now
+    sig = None                      # devices() when PortAudio last started
+    stale = False                   # a stream died or never ran: start over before the next one opens
+    done = False                    # Void is quitting: PortAudio has stopped for good, nothing opens again
+    hooked = False                  # stop() is registered to run at exit
+    mics = None                     # the last mic list list_mics() read (what it answers while an open holds the lock)
+    plays = True                    # the last answer of can_play()
+
+    @classmethod
+    @contextlib.contextmanager
+    def brief(cls):
+        """Holds the lock for the block, or yields False after LOCK_WAIT without it: a stream open can sit on macOS's
+        microphone permission prompt for as long as that's on screen, and nothing that only asks may wait behind it."""
+        got = cls.lock.acquire(timeout=LOCK_WAIT)
+        try:
+            yield got
+        finally:
+            if got:
+                cls.lock.release()
+
+
+def stop():
+    """Void is quitting: close every stream and stop PortAudio, for good. Runs at exit ahead of sounddevice's own
+    clean-up — otherwise the wake word sees its mic die under that, opens a new one on a PortAudio started over, and its
+    callback then comes in while Python is tearing itself down: it can't get Python back, and macOS reports a crash."""
+    import sys
+    _PA.done = True                                        # (set first, lock or not: nothing opens after this)
+    with _PA.brief() as got:
+        if not got:                                        # a stream's open is stuck on the microphone permission
+            sd = sys.modules.get("sounddevice")            # prompt: quitting can't wait for it (the process exits anyway),
+            if sd is not None and hasattr(sd, "_exit_handler"):
+                atexit.unregister(sd._exit_handler)        # nor may sounddevice's own clean-up Pa_Terminate beside it
+            return
+        for s in list(_PA.live):
+            s.kill()
+        sd = sys.modules.get("sounddevice")
+        try:
+            while sd is not None and sd._initialized > 0:
+                sd._terminate()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _sig():
+    try:
+        return devices() if devices else None
+    except Exception:  # noqa: BLE001
+        return _PA.sig                                     # (can't ask: call it unchanged)
+
+
+def _fresh(sd, close=True, force=False):
+    """Start PortAudio over if it's out of date. Anything still open is closed first (its owner sees it end and opens
+    a new one, on the new list) — or, close=False, left alone and PortAudio left as it is for now."""
+    with _PA.lock:
+        if _PA.done:
+            raise sd.PortAudioError("PortAudio has stopped: Void is quitting")
+        if not _PA.hooked:                                 # (sounddevice is imported by now, its clean-up registered:
+            _PA.hooked = True                              # this one, registered after, runs before it)
+            atexit.register(stop)
+        sig = _sig()
+        if not (force or _PA.stale or (sig is not None and sig != _PA.sig)) or (_PA.live and not close):
+            return
+        for s in list(_PA.live):
+            s.kill()
+        try:
+            sd._terminate()
+        except Exception:  # noqa: BLE001
+            pass                                           # (it wasn't running: an earlier restart failed halfway)
+        sd._initialize()
+        _PA.sig, _PA.stale = sig, False
+
+
+def _shut(stream):
+    try:
+        stream.abort()
+        stream.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _open(sd, owner, make):
+    """make() → owner's stream, started on an up-to-date PortAudio. One that won't start, or starts but never calls back
+    (its device has gone), gets one more go on a fresh PortAudio."""
+    with _PA.lock:
+        for again in (False, True):
+            _fresh(sd, force=again)
+            owner.first.clear()
+            s = None
+            try:
+                s = make()
+                s.start()
+            except sd.PortAudioError:
+                _shut(s)
+                if again:
+                    _PA.stale = True
+                    raise
+                continue
+            except Exception:  # noqa: BLE001
+                _shut(s)
+                raise                                      # (no such device, say: a fresh list won't help)
+            if owner.first.wait(FIRST):
+                break
+            if again:
+                _PA.stale = True                           # (still silent: hand it over anyway, try again next open)
+                break
+            _shut(s)
+        owner.stream = s
+        _PA.live.add(owner)
+
+
+def _ok(owner):
+    """Its stream is still running and called back lately. If not, its device has gone: PortAudio starts over before
+    the next stream opens."""
+    if not owner.alive:
+        return False
+    try:
+        ok = owner.stream.active and time.monotonic() - owner.ran < STALL
+    except Exception:  # noqa: BLE001
+        ok = False
+    if not ok:
+        _PA.stale = True
+    return ok
+
+
 # ---------------------------------------------------------------- microphone
 class ChannelPick:
     """Two-channel mics: keep the channel your voice is on. Some headsets send it on the second channel only and the
@@ -87,31 +228,34 @@ class Mic:
     def __init__(self, rate, device=None, keep_raw=False):
         import sounddevice as sd
         self.q, self.raw = queue.Queue(), bytearray() if keep_raw else None
-        dev = _mic_index(sd, (device or "").strip())
-        try:
-            info = sd.query_devices(dev, "input") if dev is not None and not isinstance(dev, str) else sd.query_devices(kind="input")
-            self.info = {"name": info["name"], "driver": sd.query_hostapis(info["hostapi"])["name"],
-                         "channels": int(info["max_input_channels"]), "rate": int(info["default_samplerate"])}
-        except Exception:  # noqa: BLE001
-            self.info = {"name": str(device or "default"), "driver": "?", "channels": 1, "rate": 0}
-        self.pick = None
+        self.pick, self.alive, self.ran, self.first = None, True, 0.0, threading.Event()
 
         def cb(data, frames, t, status):
+            self.ran = time.monotonic()
             b = bytes(data)
             if self.raw is not None:
                 self.raw += b
             self.q.put(self.pick(b) if self.pick else b)
-        for ch in ((2, 1) if self.info["channels"] >= 2 else (1,)):
-            self.pick = ChannelPick() if ch == 2 else None
+            if not self.first.is_set():
+                self.first.set()
+
+        def make():                                        # (after any restart: device numbers change with it)
+            dev = _mic_index(sd, (device or "").strip())
             try:
-                self.stream = sd.RawInputStream(samplerate=rate, channels=ch, dtype="int16", blocksize=int(rate * 0.02),
-                                                device=dev, callback=cb)
-                break
+                info = sd.query_devices(dev, "input") if dev is not None and not isinstance(dev, str) else sd.query_devices(kind="input")
+                self.info = {"name": info["name"], "driver": sd.query_hostapis(info["hostapi"])["name"],
+                             "channels": int(info["max_input_channels"]), "rate": int(info["default_samplerate"])}
             except Exception:  # noqa: BLE001
-                if ch == 1:
-                    raise                                  # (2 channels refused: try mono, exactly as before)
-        self.channels = ch
-        self.stream.start()
+                self.info = {"name": str(device or "default"), "driver": "?", "channels": 1, "rate": 0}
+            for ch in ((2, 1) if self.info["channels"] >= 2 else (1,)):
+                self.pick, self.channels = ChannelPick() if ch == 2 else None, ch
+                try:
+                    return sd.RawInputStream(samplerate=rate, channels=ch, dtype="int16", blocksize=int(rate * 0.02),
+                                             device=dev, callback=cb)
+                except Exception:  # noqa: BLE001
+                    if ch == 1:
+                        raise                              # (2 channels refused: try mono, exactly as before)
+        _open(sd, self, make)
         self.name = "sounddevice"
         Mic.last = self                                    # (for diagnostics: how the last recording was made)
 
@@ -121,6 +265,8 @@ class Mic:
         return (self.pick.ch + 1, self.pick.switched) if self.pick else (1, False)
 
     def read(self, timeout):
+        if not _ok(self):
+            raise EOFError                                 # (closed under it, or its mic has gone: open a new one)
         out = bytearray()
         try:
             out += self.q.get(timeout=timeout)
@@ -131,11 +277,18 @@ class Mic:
         return bytes(out)
 
     def close(self):
-        try:
-            self.stream.stop()
-            self.stream.close()
-        except Exception:  # noqa: BLE001
-            pass
+        with _PA.lock:
+            if not self.alive:
+                return
+            self.alive = False
+            _PA.live.discard(self)
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    kill = close
 
     def err(self):
         return ""
@@ -161,9 +314,14 @@ def list_mics():
     """Inputs for Settings → Voice (the id is the device name; any part of it works)."""
     try:
         import sounddevice as sd
-        api = sd.query_devices(kind="input")["hostapi"]     # just the default driver's list (no MME/WASAPI repeats)
-        return [{"id": d["name"], "label": d["name"]} for d in sd.query_devices()
-                if d["max_input_channels"] > 0 and d["hostapi"] == api]
+        with _PA.brief() as got:
+            if not got:                                    # (a stream is opening, maybe stuck on the permission prompt)
+                return list(_PA.mics or [])
+            _fresh(sd, close=False)                        # (a fresh list if nothing's open: a mic may have come)
+            api = sd.query_devices(kind="input")["hostapi"]  # just the default driver's list (no MME/WASAPI repeats)
+            _PA.mics = [{"id": d["name"], "label": d["name"]} for d in sd.query_devices()
+                        if d["max_input_channels"] > 0 and d["hostapi"] == api]
+            return list(_PA.mics)
     except Exception:  # noqa: BLE001
         return []
 
@@ -171,13 +329,16 @@ def list_mics():
 # ---------------------------------------------------------------- speakers
 class Player:
     """Looks like a `paplay` process to the Speaker: .stdin.write(raw 16-bit mono), .poll(), .kill(). Playback runs on
-    sounddevice's own audio thread; the Speaker keeps feeding it ~0.8 s ahead, exactly as on Linux."""
+    sounddevice's own audio thread; the Speaker keeps feeding it ~0.8 s ahead, exactly as on Linux. If its speakers go
+    (or another output becomes the default) it ends, like a paplay that died, and the Speaker opens a new one."""
 
     def __init__(self, rate):
         import sounddevice as sd
         self.buf, self.lock, self.alive = bytearray(), threading.Lock(), True
+        self.ran, self.first, self.asked = 0.0, threading.Event(), time.monotonic()
 
         def cb(outdata, frames, t, status):
+            self.ran = time.monotonic()
             n = frames * 2
             with self.lock:
                 chunk = bytes(self.buf[:n])
@@ -185,12 +346,22 @@ class Player:
             outdata[:len(chunk)] = chunk
             if len(chunk) < n:
                 outdata[len(chunk):] = b"\0" * (n - len(chunk))
+            if not self.first.is_set():
+                self.first.set()
 
-        self.stream = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16", latency=0.1, callback=cb)
-        self.stream.start()
+        _open(sd, self, lambda: sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16", latency=0.1, callback=cb))
         self.stdin = self
 
     def write(self, data):
+        """Also asks every RECHECK s whether you've picked other speakers: then it ends mid-sentence, and the Speaker
+        carries on from there on the new ones (Core Audio keeps a stream on the device it opened on)."""
+        now = time.monotonic()
+        moved = now - self.asked >= RECHECK and _sig() != _PA.sig
+        if moved or not _ok(self):
+            self.kill()
+            raise BrokenPipeError("the speakers have changed" if moved else "the speakers have gone")
+        if now - self.asked >= RECHECK:
+            self.asked = now
         with self.lock:
             self.buf += data
 
@@ -198,23 +369,32 @@ class Player:
         pass
 
     def poll(self):
+        """Checked before each sentence: the devices are asked again here (not in between), so it's cheap."""
+        if self.alive and (not _ok(self) or _sig() != _PA.sig):
+            self.kill()
         return None if self.alive else 0
 
     def kill(self):
-        self.alive = False
-        try:
-            self.stream.abort()
-            self.stream.close()
-        except Exception:  # noqa: BLE001
-            pass
+        with _PA.lock:
+            if not self.alive:
+                return
+            self.alive = False
+            _PA.live.discard(self)
+            _shut(self.stream)
 
 
 def can_play():
     try:
         import sounddevice as sd
-        sd.query_devices(kind="output")
-        return True
+        with _PA.brief() as got:
+            if not got:
+                return _PA.plays                           # (as last answered: a stream is opening)
+            _fresh(sd, close=False)
+            sd.query_devices(kind="output")
+            _PA.plays = True
+            return True
     except Exception:  # noqa: BLE001
+        _PA.plays = False
         return False
 
 
@@ -274,6 +454,11 @@ def clipboard(out):
         return "image", str(out)
     ok, text = ps("Get-Clipboard -Raw")
     return "text", text if ok else ""
+
+
+def set_clipboard(text):
+    """Put text on the clipboard (works when the window isn't focused, unlike the web clipboard) → ok."""
+    return ps("Set-Clipboard -Value " + _q(text))[0]
 
 
 # ---------------------------------------------------------------- notifications

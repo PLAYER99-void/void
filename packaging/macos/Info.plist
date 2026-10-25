@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.player99-void.void</string>
+	<key>CFBundleName</key>
+	<string>Void</string>
+	<key>CFBundleDisplayName</key>
+	<string>Void</string>
+	<key>CFBundleExecutable</key>
+	<string>Void</string>
+	<key>CFBundleIconFile</key>
+	<string>Void</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Void listens when you say "hey Void" or click him, so he can hear what you ask. Speech recognition runs on this Mac.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Void controls other apps when you ask him to, such as pausing the music, opening an app or changing the volume.</string>
+</dict>
+</plist>

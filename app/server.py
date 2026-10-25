@@ -10,6 +10,7 @@ Local server (127.0.0.1 only) that:
 """
 import argparse
 import array
+import atexit
 import collections
 import io
 import json
@@ -34,6 +35,8 @@ from urllib.parse import urlparse
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 import quick  # noqa: E402
+import agents  # noqa: E402
+import langmark  # noqa: E402
 import recall  # noqa: E402
 WIN = os.name == "nt"                        # Windows: OS bits go through winsys.py instead of Linux command-line tools
 if WIN:
@@ -42,6 +45,10 @@ if WIN:
     for _s in (sys.stdout, sys.stderr):               # logs go to a file: write UTF-8, not the old Windows code page
         if _s is not None and hasattr(_s, "reconfigure"):
             _s.reconfigure(encoding="utf-8", errors="replace")
+MAC = sys.platform == "darwin"               # macOS: OS bits go through macsys.py (the same shape as winsys.py)
+if MAC:
+    import macsys  # noqa: E402
+OSYS = winsys if WIN else macsys if MAC else None   # (None on Linux: command-line tools, below)
 STATIC = APP_DIR / "static"
 try:                                            # written by the release build (and kept in git for git installs)
     VERSION = (APP_DIR / "VERSION").read_text(encoding="utf-8").strip() or "0.0.0"
@@ -59,6 +66,9 @@ STATE_PATH = DATA_DIR / "state.json"
 # password helper) and only works for those: asking you to approve, looking at the screen, and the sudo card in root mode.
 TOKEN = secrets.token_urlsafe(24)
 TOOL_TOKEN = secrets.token_urlsafe(24)
+# not a password: which run this is. In runtime.json and the /api/id answer, so a launcher can tell its own
+# server from another Void's on the same port without the token ever going on a command line
+RUN_ID = os.environ.get("VOID_RUN_ID") or secrets.token_hex(8)   # (the window that restarts us picks it)
 TOOL_PATHS = {"/api/approve", "/api/capture", "/api/askpass"}
 
 VOICE_PROMPT = (
@@ -78,14 +88,21 @@ VOICE_PROMPT = (
     "saying how you mean it, so the face matches your words: [neutral] [happy] [proud] [excited] [laugh] [warm] "
     "[curious] [unsure] [thinking] [surprised] [sorry] [serious]. Example: \"[proud] Fixed it, all nine tests pass now. "
     "[curious] Want me to commit it?\" You can switch tags mid-sentence if your feeling changes. Never put these tags in "
-    "files, code, commands or tool input — only in the words you say to the user."
+    "files, code, commands or tool input — only in the words you say to the user. "
+    "To have non-English names and titles pronounced right, mark them in your spoken reply with their language code in "
+    "curly braces, e.g. {fr:Les Jardins de Minuit} or {ja:Sen to Chihiro} (fr, es, de, it, pt, ja in rōmaji, nl, sv, "
+    "pl); Void says them in that language and shows just the words. Never put these marks in files, code, commands or "
+    "tool input. "
+    "Never list sources, citations or links in your reply, even when a tool asks you to; they can't be read aloud. "
+    "Name a source in words only if the user asks where something came from."
 )
-# the face tags Claude puts in its replies (see VOICE_PROMPT) — never spoken, never shown, never saved
+# the face tags Claude puts in its replies (see VOICE_PROMPT) — never spoken, never shown, never saved. Its {fr:…}
+# marks (langmark.py) are spoken (by Kokoro), never shown or saved.
 FACE_TAG_RE = re.compile(r"\[(?:neutral|happy|proud|excited|laugh|warm|curious|unsure|thinking|surprised|sorry|serious)\]\s*", re.I)
 
 
 def untag(t):
-    return FACE_TAG_RE.sub("", t or "")
+    return langmark.unmark(FACE_TAG_RE.sub("", t or ""))
 
 DEFAULTS = {
     "port": 47777,
@@ -113,6 +130,8 @@ DEFAULTS = {
     "auto_model": "haiku",
     "extra_args": [],
     "partial_messages": True,
+    # one Claude Code process per chat, so he answers right away while his subagents keep working (false: one per message)
+    "long_lived": True,
     "voice_prompt": VOICE_PROMPT,
     # auto = small.en on an NVIDIA GPU (fast + accurate), base.en on CPU. Or pin one: tiny.en / base.en / small.en / medium.en
     "whisper_model": "auto",
@@ -257,6 +276,7 @@ class State:
         self.notes = s.get("notes") or ""          # the handoff note written when the context was compacted
         self.ctx_used, self.ctx_max = int(s.get("ctx_used") or 0), int(s.get("ctx_max") or 200000)
         self.compacting = False
+        self.alerting = False                      # answering an inbox alert (the page only sees "thinking")
         self.auto_pick = ""
         self.last_worked = False                   # did the last answer use tools? then a short "yes" is still work
 
@@ -380,12 +400,17 @@ def hist_load(limit=60):
     return out
 
 
+def notes_text():
+    notes = mem_load()
+    return ("Things the user asked you to remember (keep using them):\n" +
+            "\n".join(f"- {n['text']}" for n in notes[-60:])) if notes else ""
+
+
 def memory_prompt(fresh):
     parts = []
-    notes = mem_load()
+    notes = notes_text()
     if notes:
-        parts.append("Things the user asked you to remember (keep using them):\n" +
-                     "\n".join(f"- {n['text']}" for n in notes[-60:]))
+        parts.append(notes)
     if ST.notes:                                # the chat was compacted: this is what happened so far
         parts.append("Notes you wrote when this chat got long (what's done and what's open — carry on from here):\n"
                      + ST.notes)
@@ -399,6 +424,21 @@ def memory_prompt(fresh):
 AUTOSTART_DESKTOP = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "autostart" / "void.desktop"
 HYPR_CONF = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "hypr" / "hyprland.conf"
 HYPR_MARK = "# added by Void (Settings → More → Start when I log in)"
+LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / "void.plist"
+
+
+def launcher_is_transient(path):
+    """True for a path that won't exist at the next login: inside a mounted disk image (/Volumes/...), or in the
+    throwaway copy Gatekeeper runs a quarantined app from (App Translocation)."""
+    p = str(path)
+    return p.startswith("/Volumes/") or "/AppTranslocation/" in p
+
+
+def resync_launch_agent():
+    """On startup: an existing LaunchAgent is rewritten to point at the Void that is running now (the app may have
+    been moved, updated or reinstalled since it was written)."""
+    if MAC and CFG.get("autostart") and LAUNCH_AGENT.exists():
+        sync_autostart()
 
 
 def sync_autostart():
@@ -412,6 +452,22 @@ def sync_autostart():
                             icon=str(STATIC / "icon.ico"))
         else:
             link.unlink(missing_ok=True)
+        return
+    if MAC:                                   # a LaunchAgent that runs `void show` when you log in
+        launcher = macsys.bundle_launcher(APP_DIR) or shutil.which("void") or str(Path.home() / ".local/bin/void")
+        try:
+            if on and launcher_is_transient(launcher):      # running from the DMG or translocated: that path will vanish
+                print(f"[void] launch agent: not pointing it at {launcher} (move Void to Applications first)",
+                      file=sys.stderr)
+            elif on:
+                import plistlib
+                LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
+                LAUNCH_AGENT.write_bytes(plistlib.dumps({"Label": "void", "ProgramArguments": [launcher, "show"],
+                                                         "RunAtLoad": True}))
+            else:
+                LAUNCH_AGENT.unlink(missing_ok=True)
+        except OSError as e:
+            print(f"[void] launch agent: {e}", file=sys.stderr)
         return
     launcher = shutil.which("void") or str(Path.home() / ".local/bin/void")     # ~/.local/bin, or /usr/bin after ninja install
     try:
@@ -531,6 +587,8 @@ def sensitive_paths():
         appdata = Path(os.environ.get("APPDATA") or h / "AppData" / "Roaming")
         docs = h / "Documents"
         dirs += [appdata / "Microsoft" / "Windows" / "Start Menu", docs / "WindowsPowerShell", docs / "PowerShell"]
+    if MAC:
+        dirs += [h / "Library" / "LaunchAgents"]
     return [d.resolve() for d in dirs], [f.resolve() for f in files]
 
 
@@ -539,7 +597,7 @@ def edit_needs_card(path):
     git repo's hooks and config."""
     if path is None:
         return True
-    norm = (lambda x: str(x).lower()) if WIN else str
+    norm = (lambda x: str(x).lower()) if WIN or MAC else str     # (both ignore case: ~/.SSH is ~/.ssh)
     dirs, files = sensitive_paths()
     if any(norm(path) == norm(f) for f in files) or ".git" in path.parts:
         return True
@@ -594,7 +652,8 @@ class Approvals:
         with self.lock:
             self.always.clear()
 
-    def ask(self, tool, inp, timeout=600):
+    def ask(self, tool, inp, timeout=600, agent=None):
+        """agent: the subagent asking ({id, type, desc}), None for him."""
         # the raw, complete command (summarize_input() shortens it and folds newlines away)
         cmd = str(inp.get("command") or "").strip() if tool == "Bash" and isinstance(inp, dict) else ""
         # what "always" covers: the whole command (never just its first word), the one file, the one website
@@ -616,8 +675,14 @@ class Approvals:
         with self.lock:
             self.pending[aid] = item
         BUS.pub(t="approve", id=aid, tool=tool, detail=item["detail"], key=key, say=approval_say(tool, inp),
-                always=can_always)
-        ev.wait(timeout)
+                always=can_always, agent=agent)
+        if agent:
+            BRAIN.set_waiting(agent["id"], True)
+        try:
+            ev.wait(timeout)
+        finally:
+            if agent:
+                BRAIN.set_waiting(agent["id"], False)
         with self.lock:
             self.pending.pop(aid, None)
         ans = item["ans"] or "no"
@@ -766,15 +831,15 @@ def capture(kind):
     for old in sorted(SHOTS.glob("void-*.*"))[:-30]:        # keep the folder small
         old.unlink(missing_ok=True)
     out = SHOTS / f"void-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}.png"
-    if WIN:
+    if OSYS:
         if kind == "clipboard":
-            what, val = winsys.clipboard(out)
+            what, val = OSYS.clipboard(out)
             if what == "image":
                 return {"kind": "clipimg", "path": str(_shrink(Path(val))), "label": "copied image"}
             if not val.strip():
                 raise RuntimeError("the clipboard is empty")
             return {"kind": "clip", "text": val[:12000], "label": "copied text"}
-        got = winsys.screenshot(kind, out)
+        got = OSYS.screenshot(kind, out)
         return {"kind": got, "path": str(_shrink(out)),
                 "label": {"screen": "screenshot", "window": "your window", "region": "screen area"}[got]}
     wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
@@ -852,6 +917,22 @@ def capture(kind):
     raise RuntimeError("unknown capture")
 
 
+def set_clipboard(text):
+    """Put text on the clipboard from here, for when the web clipboard refuses (the window isn't focused) → ok."""
+    if OSYS:
+        return OSYS.set_clipboard(text)
+    wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    cmd = (["wl-copy"] if wayland and shutil.which("wl-copy") else ["xclip", "-selection", "clipboard", "-i"]
+           if shutil.which("xclip") else ["xsel", "-b", "-i"] if shutil.which("xsel") else None)
+    if not cmd:
+        return False
+    try:                                       # (these leave a helper running to hold the text: don't wait on its pipes)
+        return subprocess.run(cmd, input=text.encode(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def attach_prompt(atts):
     parts = []
     for a in atts or []:
@@ -870,8 +951,8 @@ def attach_prompt(atts):
 
 
 def notify(title, body):
-    if WIN:
-        return winsys.notify(title, body)
+    if OSYS:
+        return OSYS.notify(title, body)
     if shutil.which("notify-send"):
         subprocess.Popen(["notify-send", "-a", "Void", "-i", str(STATIC / "icon.png"), title, body[:300]],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -911,7 +992,7 @@ def _preload_cuda_libs():
 
 
 def _gpu_ok():
-    if CFG["whisper_device"] == "cpu" or not (winsys.gpu_ok() if WIN else os.path.exists("/proc/driver/nvidia/version")):
+    if CFG["whisper_device"] == "cpu" or not (OSYS.gpu_ok() if OSYS else os.path.exists("/proc/driver/nvidia/version")):
         return False
     try:
         import ctranslate2
@@ -1064,6 +1145,10 @@ def last_speech_end(pcm: bytes):
     return ts[-1]["end"] / RATE if ts else None
 
 
+# when a spoken request is over: this long with no voice, or with nothing the speech detector calls speech
+TURN_QUIET, TURN_VAD, TURN_MAX = 1.2, 1.6, 120
+
+
 class MicAuto:
     """Keeps your voice at a level he hears well. After you speak: if it came in quiet, turn the mic's Windows level up;
     if it clipped, turn it down. Once Windows is at 100% and you're still quiet, `soft` boosts what the speech detector
@@ -1086,17 +1171,17 @@ class MicAuto:
             return
         cls.last, cls.last_peak = time.monotonic(), pk
         hint = CFG.get("mic_device") or ""
-        hw = winsys.mic_level(hint) if WIN else None
+        hw = OSYS.mic_level(hint) if OSYS else None
         if clipped > 0.002 or pk > cls.LOUD:
             if hw is not None and hw > 0.15:
-                winsys.set_mic_level(hw * 0.8, hint)
+                OSYS.set_mic_level(hw * 0.8, hint)
                 print(f"[void] mic: your voice clipped — Windows mic level {hw:.0%} → {hw * 0.8:.0%}", file=sys.stderr)
             cls.soft = 1.0
         elif pk * cls.soft < cls.QUIET:
             want = min(2.0, cls.TARGET / pk)      # how much louder it should be, at most double per step
             if hw is not None and hw < 0.99:
                 new = min(1.0, hw * want)
-                winsys.set_mic_level(new, hint)
+                OSYS.set_mic_level(new, hint)
                 print(f"[void] mic: your voice came in quiet — Windows mic level {hw:.0%} → {new:.0%}", file=sys.stderr)
             else:
                 cls.soft = min(8.0, cls.TARGET / pk)
@@ -1124,7 +1209,7 @@ def mic_cmds():
 
 class LinuxMic:
     """A recorder program's output: read(timeout) → bytes (b"" = nothing yet; EOFError if it stopped), close(). On
-    Windows, winsys.Mic has the same shape."""
+    Windows and macOS, winsys.Mic has the same shape."""
 
     def __init__(self, proc, name):
         self.proc, self.name, self.fd = proc, name, proc.stdout.fileno()
@@ -1147,9 +1232,12 @@ class LinuxMic:
 
 def open_mic():
     """Start the first recorder that actually produces audio. Returns (mic, name, first_bytes)."""
-    if WIN:
-        mic = winsys.Mic(RATE, CFG.get("mic_device"))
-        first = mic.read(2.5)
+    if OSYS:
+        mic = OSYS.Mic(RATE, CFG.get("mic_device"))
+        try:
+            first = mic.read(2.5)
+        except EOFError:                   # (it never called back, even on a fresh device list)
+            first = b""
         if not first:
             mic.close()
             raise RuntimeError("couldn't open the mic — no sound came in (Settings → Privacy → Microphone?)")
@@ -1213,7 +1301,7 @@ class Listen:
         pcm = bytearray()
         t0 = time.monotonic()
         fl = Floor()
-        floor, spoke, voiced, last_voice, peak, clipped = None, False, 0, t0, 0.0, 0
+        floor, spoke, voiced, last_voice, peak, clipped, clip_run = None, False, 0, t0, 0.0, 0, 0
         vad_at = vad_last = 0.0
         reason = "stop"
         try:
@@ -1225,7 +1313,11 @@ class Listen:
                     s = memoryview(fr).cast("h")
                     rms = (sum(x * x for x in s) / n) ** 0.5 / 32768.0 * MicAuto.soft
                     peak = max(peak, rms)
-                    clipped += sum(1 for x in s if x > 32500 or x < -32500)
+                    # only sustained clipping counts (≥3 frames in a row): a key click or a bump is a one-frame spike
+                    c = sum(1 for x in s if x > 32500 or x < -32500)
+                    clip_run = clip_run + 1 if c else 0
+                    if clip_run >= 3:
+                        clipped += c
                     now = time.monotonic()
                     floor = fl.update(rms, hold=voiced >= 3)
                     thr = max(0.012, floor * 3.0)
@@ -1247,13 +1339,13 @@ class Listen:
                                 vad_last = now - (len(tail) / (RATE * 2) - e)
                             elif e is False:
                                 vad_last = now
-                        if spoke and (now - last_voice > 1.2 or now - vad_last > 1.6):
+                        if spoke and (now - last_voice > TURN_QUIET or now - vad_last > TURN_VAD):
                             reason = "done"
                         elif not spoke and now - t0 > 8:
                             reason, self.cancel = "nospeech", True
                     if now - t0 > 1.5 and peak < 0.0005:
                         reason = "silent"          # dead input: say so right away instead of waiting
-                    if now - t0 > 120:
+                    if now - t0 > TURN_MAX:
                         reason = "toolong"
                     if reason != "stop":
                         self.stop_ev.set()
@@ -1285,7 +1377,12 @@ class Listen:
         if clipped > RATE * 0.05:
             emit(t="note", text="your mic is clipping (too loud) — turn the input down to ~65% for better recognition")
         emit(t="transcribing")
-        emit(t="text", text=transcribe_pcm(bytes(pcm)))
+        text = transcribe_pcm(bytes(pcm))
+        if is_echo(text):                        # (his own voice through the mic, not you)
+            print(f"[void] dropped echo of own speech: {text.strip()[:80]}", file=sys.stderr)
+            emit(t="cancel", why="echo")
+            return
+        emit(t="text", text=text)
 
 
 def reset_whisper():
@@ -1296,8 +1393,8 @@ def reset_whisper():
 
 
 def list_mics():
-    if WIN:
-        return winsys.list_mics()
+    if OSYS:
+        return OSYS.list_mics()
     if not shutil.which("pactl"):
         return []
     out = subprocess.run(["pactl", "-f", "json", "list", "sources"], capture_output=True, text=True).stdout
@@ -1317,6 +1414,33 @@ FOLLOW_NOTE = ("(Voice note from Void: the mic picked this up a few seconds afte
                "If it is clearly not meant for you, e.g. the user thinking out loud, talking to themselves or to someone "
                "else, reply with exactly [ignore] and nothing else, and use no tools. Otherwise just answer it normally.)\n\n")
 IGNORE = "[ignore]"
+ECHO_TAIL = 1.0          # s after he stops talking that the room still rings: a burst starting before then is his own voice
+ECHO_KEEP, ECHO_RATIO, ECHO_MIN = 60, 0.6, 3     # remember what he said for 60 s · share of heard words in his order · fewest words to judge
+SPOKEN = collections.deque(maxlen=200)           # (monotonic time, text) of what he said lately
+
+
+def note_spoken(text):
+    SPOKEN.append((time.monotonic(), langmark.unmark(text)))
+
+
+def is_echo(heard):
+    """The mic caught his own voice: most of the heard words are, in order, a stretch of something he said lately."""
+    h = re.findall(r"[^\W_]+", (heard or "").lower())
+    if len(h) < ECHO_MIN:
+        return False
+    now = time.monotonic()
+    while SPOKEN and now - SPOKEN[0][0] > ECHO_KEEP:
+        SPOKEN.popleft()
+    for _t, said in list(SPOKEN):
+        s = re.findall(r"[^\W_]+", said.lower())
+        row = [0] * (len(s) + 1)             # longest common subsequence of the words
+        for w in h:
+            prev, row = row, [0]
+            for j, x in enumerate(s):
+                row.append(prev[j] + 1 if w == x else max(prev[j + 1], row[j]))
+        if row[-1] >= ECHO_RATIO * len(h):
+            return True
+    return False
 
 # what the speech model "hears" in background noise — never treat these as a follow-up request
 NOISE_WORDS = {"you", "thank you", "thanks", "bye", "thanks for watching", "thank you for watching", "uh", "um", "hmm"}
@@ -1332,6 +1456,11 @@ class Wake:
     follow_on = False                        # what the page was last told (it shows him listening while it's open)
     cut = None                               # you clicked him ("finish") or pressed Space/Esc ("cancel") while he heard you
     asleep = False                           # he's hidden: the mic stays closed until he's shown again
+    poke = threading.Event()                 # set whenever should_run()/wanted() may have changed (loop waits on it)
+
+    @classmethod
+    def nudge(cls):
+        cls.poke.set()
 
     @classmethod
     def wanted(cls):
@@ -1349,10 +1478,11 @@ class Wake:
 
     @classmethod
     def talking_until(cls, end):
-        """He's talking until `end`; the follow-up window opens just before that, so a quick answer isn't lost."""
+        """He's talking until `end`; the follow-up window opens once his echo has died away (ECHO_TAIL)."""
         cls.speaking_until = end
-        cls.follow_from = end - 0.15
-        cls.follow_until = end + float(CFG.get("follow_up") or 0)
+        cls.follow_from = end + ECHO_TAIL      # (not before the room has stopped ringing with his voice)
+        cls.follow_until = cls.follow_from + float(CFG.get("follow_up") or 0)
+        cls.nudge()
 
     @classmethod
     def end_follow(cls, how):
@@ -1360,11 +1490,13 @@ class Wake:
         cls.cut = how
         if how != "finish":
             cls.follow_until = 0.0
+        cls.nudge()
 
     @classmethod
     def hush(cls):
         """He was cut off: no follow-up window."""
         cls.speaking_until = cls.follow_until = 0.0
+        cls.nudge()
 
     @classmethod
     def ensure(cls):
@@ -1378,14 +1510,18 @@ class Wake:
             return False
         if cls.speaking():                       # while he talks: only to catch "stop" / "hey Void" (barge-in)
             return bool(CFG.get("barge_in"))
-        return bool(CFG.get("wake_word")) or time.monotonic() < cls.follow_until
+        return bool(CFG.get("wake_word")) or cls.follow_from <= time.monotonic() < cls.follow_until
 
     @classmethod
     def loop(cls):
         last = None
         while cls.wanted():
+            cls.poke.clear()                     # (before checking, so a change right after isn't missed)
             if not cls.should_run():
-                time.sleep(0.2)
+                # nothing to do until poked, or until he stops talking / the follow-up window opens or closes
+                now = time.monotonic()
+                due = [t - now for t in (cls.speaking_until, cls.follow_from, cls.follow_until) if t > now]
+                cls.poke.wait(min(due) + 0.01 if due else 60)
                 continue
             try:
                 cls.session()
@@ -1402,7 +1538,8 @@ class Wake:
         fl = Floor()
         floor, voiced, seg, in_speech, last_voice, started = None, 0, bytearray(), False, 0.0, 0.0
         pre, n, vad_at, vad_last = bytearray(), 0, 0.0, 0.0
-        cls.cut = None
+        req, said = False, None              # req: this burst is a request (a follow-up, or it began "hey Void"), so it
+        cls.cut = None                       # runs until you've finished, like a normal listen, not to the first breath
         try:
             while cls.should_run() or (in_speech and not cls.asleep and not Listen.lock.locked()):   # (finish what you started saying)
                 try:
@@ -1424,7 +1561,8 @@ class Wake:
                             cls.check(bytes(seg), started)
                         in_speech, seg, cls.follow_until = False, bytearray(), 0.0
                     # you started talking inside the follow-up window: show him hearing you, ring/eyes move with your voice
-                    fol = cls.window_open()               # shown the moment the window opens, so you know when to talk
+                    fol = cls.window_open() or (in_speech and req and not cls.speaking())   # (and stays shown while
+                    # you're still saying something you started inside it, even past the window's end)
                     if fol != cls.follow_on:
                         cls.follow_on = fol
                         BUS.pub(t="follow", on=fol)
@@ -1443,37 +1581,69 @@ class Wake:
                                 vad_last = now - (len(tail) / (RATE * 2) - e)
                             elif e is False:
                                 vad_last = now
-                        if now - last_voice > 0.7 or now - vad_last > 1.3 or len(seg) > RATE * 2 * 12:
+                        if req:
+                            done = (now - last_voice > TURN_QUIET or now - vad_last > TURN_VAD
+                                    or len(seg) > RATE * 2 * TURN_MAX)
+                        else:
+                            done = now - last_voice > 0.7 or now - vad_last > 1.3 or len(seg) > RATE * 2 * 12
+                            if done and not cls.speaking() and len(seg) > RATE * 2 * 0.35:
+                                said = cls.heard(bytes(seg))
+                                if WAKE_RE.match(said or ""):     # "hey Void, ...": hear the rest of it out
+                                    req, done, said = True, False, None
+                        if done:
                             in_speech = False
                             if len(seg) > RATE * 2 * 0.35:
-                                cls.check(bytes(seg), started)
-                            seg = bytearray()
+                                cls.check(bytes(seg), started, None if req else said)
+                            seg, req, said = bytearray(), False, None
                     else:
                         pre = (pre + fr)[-FRAME * 8:]
                         if voiced >= 3:
                             in_speech, last_voice, seg, started = True, now, bytearray(pre), now
                             vad_last = now
+                            req = cls.window_open() and not cls.speaking()
         finally:
             if cls.follow_on:
                 cls.follow_on = False
                 BUS.pub(t="follow", on=False)
             mic.close()
 
+    @staticmethod
+    def heard(pcm):
+        """A quick listen for his name at the first pause (None: nothing worth transcribing)."""
+        try:
+            ss = speech_seconds(pcm)
+            if ss < 0.25 or ss < len(pcm) / (RATE * 2) * 0.2:
+                return None
+            return transcribe_pcm(pcm, beam=1, hint="Hey Void.")
+        except Exception as e:  # noqa: BLE001
+            print(f"[void] wake word stt: {e}", file=sys.stderr)
+            return None
+
     @classmethod
-    def check(cls, pcm, started):
+    def check(cls, pcm, started, text=None):
         # started after he finished talking, inside the follow-up window → it's a request, no "hey Void" needed
         follow = not cls.speaking() and cls.follow_from <= started < cls.follow_until and not ST.lock.locked()
+        if not cls.speaking() and started < cls.speaking_until + ECHO_TAIL:    # began while he talked / in the echo: his voice
+            print("[void] ignored while talking", file=sys.stderr)
+            return
         if not cls.speaking():                   # (while he talks the mic also hears him: don't tune to his voice)
             MicAuto.learn(pcm)
         try:
             ss = speech_seconds(pcm)
             if ss < 0.25 or ss < len(pcm) / (RATE * 2) * 0.2:    # music or noise, not talking: don't let Whisper dream up words
                 return
-            text = transcribe_pcm(pcm) if follow else transcribe_pcm(pcm, beam=1, hint="Hey Void.")
+            if text is None:
+                text = transcribe_pcm(pcm) if follow else transcribe_pcm(pcm, beam=1, hint="Hey Void.")
         except Exception as e:  # noqa: BLE001
             print(f"[void] wake word stt: {e}", file=sys.stderr)
             return
         m = WAKE_RE.match(text or "")
+        print(f"[void] heard {len(pcm) / (RATE * 2):.1f}s, {len((text or '').split())} words"
+              f"{', follow-up' if follow else ''}{', wake word' if m else ''}{', while talking' if cls.speaking() else ''}",
+              file=sys.stderr)
+        if is_echo(text):
+            print(f"[void] dropped echo of own speech: {text.strip()[:80]}", file=sys.stderr)
+            return
         if cls.speaking():
             if STOP_RE.fullmatch((text or "").strip(" .,!?").lower()) or m:
                 BUS.pub(t="barge", listen=bool(m), text=(m.group(2).strip(" .,!?") if m else ""))
@@ -1491,9 +1661,9 @@ class Wake:
 
 def doctor():
     print(f"Void doctor (version {VERSION})\n")
-    if WIN:
+    if OSYS:
         print("inputs (any part of a name works as mic_device):")
-        for m in winsys.list_mics():
+        for m in OSYS.list_mics():
             print("  " + m["label"])
         print()
     elif shutil.which("pactl"):
@@ -1504,11 +1674,11 @@ def doctor():
             if ".monitor" not in ln:
                 print("  " + ln + ("   <- default" if dflt and dflt in ln else ""))
         print()
-    print("recorders tried in order:", "sounddevice" if WIN else (", ".join(c[0] for c in mic_cmds()) or "NONE"))
+    print("recorders tried in order:", "sounddevice" if OSYS else (", ".join(c[0] for c in mic_cmds()) or "NONE"))
     print("recording 3 seconds — keep talking the whole time…", flush=True)
     try:
-        if WIN:                                     # (keep every channel, to see which one your voice is on)
-            mic = winsys.Mic(RATE, CFG.get("mic_device"), keep_raw=True)
+        if OSYS:                                    # (keep every channel, to see which one your voice is on)
+            mic = OSYS.Mic(RATE, CFG.get("mic_device"), keep_raw=True)
             name, buf = mic.name, b""
         else:
             mic, name, buf = open_mic()
@@ -1520,7 +1690,7 @@ def doctor():
                 break
         mic.close()
         data = bytes(data[: len(data) // 2 * 2])
-        if WIN:
+        if OSYS:
             i = mic.info
             ch, switched = mic.channel
             print(f"  device: {i['name']} · {i['driver']} · {i['channels']} channel(s) · {i['rate']} Hz"
@@ -1532,7 +1702,7 @@ def doctor():
         print(f"  {name}: {len(data) / 32000:.1f}s captured, loudest {peak:.3f}  [{bar:<30}]")
         # what each channel carries: how loud, and whether there's any talking in it at all
         chans = {"": data}
-        if WIN and mic.channels == 2 and mic.raw:
+        if OSYS and mic.channels == 2 and mic.raw:
             import numpy as np
             st = np.frombuffer(bytes(mic.raw[: len(mic.raw) // 4 * 4]), dtype=np.int16).reshape(-1, 2)
             chans = {f"channel {c + 1}": np.ascontiguousarray(st[:, c]).tobytes() for c in (0, 1)}
@@ -1550,7 +1720,7 @@ def doctor():
         try:
             import wave as _w
             with _w.open(str(wav), "wb") as w:
-                raw = bytes(mic.raw) if WIN and mic.channels == 2 and mic.raw else data
+                raw = bytes(mic.raw) if OSYS and mic.channels == 2 and mic.raw else data
                 w.setnchannels(2 if raw is not data else 1)
                 w.setsampwidth(2)
                 w.setframerate(RATE)
@@ -1558,7 +1728,7 @@ def doctor():
         except Exception:  # noqa: BLE001
             wav = None
         if peak > 0.98:
-            print("  -> CLIPPING: input is too loud — turn the mic down to ~65% in Sound settings" if WIN else
+            print("  -> CLIPPING: input is too loud — turn the mic down to ~65% in Sound settings" if OSYS else
                   "  -> CLIPPING: input is too loud — try: wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 0.65")
         elif talk.get("") == 0 or (len(talk) == 2 and not heard_any):
             print("  -> NO VOICE in what this mic sends, only background noise. Is the mic muted on the headset "
@@ -1593,11 +1763,15 @@ def doctor():
 
 
 # ---------------------------------------------------------------- text to speech
-def piper_bin():
+def piper_cmd():
+    """The command that runs piper: Void's own interpreter with `-m piper` (a console script's shebang breaks once the
+    environment moves), else a piper on disk. → argv list, or None."""
+    import importlib.util
+    if importlib.util.find_spec("piper") is not None:
+        return [sys.executable, "-m", "piper"]
     local = Path(sys.executable).parent / ("piper.exe" if WIN else "piper")
-    if local.exists():
-        return str(local)
-    return shutil.which("piper") or shutil.which("piper-tts")
+    found = str(local) if local.exists() else (shutil.which("piper") or shutil.which("piper-tts"))
+    return [found] if found else None
 
 
 def piper_voice():
@@ -1615,7 +1789,7 @@ def tts_engine():
         return None
     if mode in ("auto", "kokoro") and kokoro_ready():
         return "kokoro"
-    if mode in ("auto", "piper") and piper_bin() and piper_voice():
+    if mode in ("auto", "piper") and piper_cmd() and piper_voice():
         return "piper"
     if mode in ("auto", "espeak") and shutil.which("espeak-ng"):
         return "espeak"
@@ -1639,9 +1813,10 @@ def say_path(p):
 
 
 def speakable(t: str) -> str:
-    t = untag(t)
+    t = FACE_TAG_RE.sub("", t or "")                 # (the {fr:…} marks stay, for synth())
+    t = re.sub(r"(?im)^\s*[*_#]*\s*(?:sources?|citations?|references?)\s*[*_]*\s*:.*\Z", "", t, flags=re.S)  # a trailing source list
     t = re.sub(r"```.*?```", " I put some code on screen. ", t, flags=re.S)
-    t = re.sub(r"`([^`]*)`", r"\1", t)
+    t = re.sub(r"`([^`]*)`", lambda m: m.group(1).replace("{", " ").replace("}", " "), t)   # code is never a {fr:…}
     t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
     t = re.sub(r"https?://\S+", "a link", t)
     t = PATH_RE.sub(lambda m: say_path(m.group(0).rstrip(".")) + "." * (len(m.group(0)) - len(m.group(0).rstrip("."))), t)
@@ -1711,7 +1886,13 @@ def kokoro_synth(text, voice, speed):
         if k is None:
             k = _KOKORO["k"] = Kokoro(str(KOKORO_DIR / "kokoro-v1.0.int8.onnx"), str(KOKORO_DIR / "voices-v1.0.bin"))
         lang = "en-gb" if voice[:1] == "b" else "en-us"
-        samples, sr = k.create(text, voice=voice, speed=max(0.5, min(2.0, speed)), lang=lang)
+        speed, out = max(0.5, min(2.0, speed)), None
+        try:                     # {fr:…} words in their own language's phonemes, the rest in English: one call, one voice
+            ph = langmark.phonemes(text, k.tokenizer.phonemize, lang)
+            out = ph and k.create(ph, voice=voice, speed=speed, is_phonemes=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[void] foreign words: {e}", file=sys.stderr)
+        samples, sr = out or k.create(langmark.unmark(text), voice=voice, speed=speed, lang=lang)
     import numpy as np
     pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
     buf = io.BytesIO()
@@ -1757,7 +1938,7 @@ _piper_speed_flag = None
 
 def piper_run(model, text, out, length_scale):
     global _piper_speed_flag
-    base = [piper_bin(), "-m", model, "-f", out]
+    base = [*piper_cmd(), "-m", model, "-f", out]
     flags = [_piper_speed_flag] if _piper_speed_flag else ["--length-scale", "--length_scale"]
     if abs(length_scale - 1) > 0.01:
         for f in flags:
@@ -1938,9 +2119,9 @@ def audio_player_cmd(rate):
 
 
 def make_player(rate):
-    """Something that takes raw 16-bit mono on .stdin: paplay/aplay on Linux, sounddevice on Windows."""
-    if WIN:
-        return winsys.Player(rate)
+    """Something that takes raw 16-bit mono on .stdin: paplay/aplay on Linux, sounddevice on Windows and macOS."""
+    if OSYS:
+        return OSYS.Player(rate)
     return subprocess.Popen(audio_player_cmd(rate), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
 
@@ -1977,7 +2158,7 @@ class Speaker:
 
     @classmethod
     def available(cls):
-        return CFG.get("voice_out", "auto") != "page" and (winsys.can_play() if WIN else audio_player_cmd(22050) is not None)
+        return CFG.get("voice_out", "auto") != "page" and (OSYS.can_play() if OSYS else audio_player_cmd(22050) is not None)
 
     @classmethod
     def _start(cls):
@@ -1993,6 +2174,7 @@ class Speaker:
         with cls.cv:
             if epoch is not None and epoch < cls.epoch:      # sent before you cut him off, arrived after
                 return
+            note_spoken(text)
             cls.todo.append((cls.gen, sid, text))
             if all(isinstance(x[1], int) for x in cls.todo):     # sentences can arrive out of order: play them in order
                 cls.todo.sort(key=lambda x: (x[0], x[1]))
@@ -2035,7 +2217,7 @@ class Speaker:
                     continue
                 t = time.monotonic()
                 wav, rate = synth(text)
-                wav, times, level = tidy_full(wav, text)
+                wav, times, level = tidy_full(wav, langmark.unmark(text))
                 with wave.open(io.BytesIO(wav)) as w:
                     sr, pcm = w.getframerate(), w.readframes(w.getnframes())
                 took = time.monotonic() - t
@@ -2073,9 +2255,10 @@ class Speaker:
         return cls.proc
 
     @classmethod
-    def _write(cls, data, g):
+    def _write(cls, data, g, again=True):
         """Stream raw samples, keeping LEAD seconds buffered. If we were ever late (the speakers ran dry) count it and
-        move the clock on, so the start times we tell the page stay true."""
+        move the clock on, so the start times we tell the page stay true. If the player ends mid-way (you picked other
+        speakers) a new one carries on, from what the old one still had queued and so never played."""
         step = max(2, int(cls.prate * 0.02)) * 2
         for i in range(0, len(data), step):
             while True:
@@ -2100,7 +2283,15 @@ class Speaker:
                 cls.proc.stdin.write(data[i:i + step])
                 cls.proc.stdin.flush()
             except (BrokenPipeError, OSError, AttributeError):
-                return False
+                if not again or g != cls.gen or cls.proc is None:
+                    return False
+                back = int(max(0.0, ahead) * cls.prate) * 2
+                try:
+                    cls._player(cls.prate)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[void] audio player: {e}", file=sys.stderr)
+                    return False
+                return cls._write(data[max(0, i - back):], g, again=False)
             cls.written += len(data[i:i + step]) // 2
         return True
 
@@ -2141,7 +2332,7 @@ class Speaker:
                     level=level, step=lstep)
             if not cls._write(pcm, g):
                 continue
-            pause = 0.3 if re.search(r"[.!?]['\")]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
+            pause = 0.3 if re.search(r"[.!?]['\")}]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
             cls._write(b"\0\0" * int(prate * pause), g)
 
 
@@ -2174,7 +2365,7 @@ def stress_voice(silent=False):
         globals()["audio_player_cmd"] = lambda rate: [sys.executable, "-c", "import sys\nwhile sys.stdin.buffer.read(65536): pass"]
         globals()["make_player"] = lambda rate: subprocess.Popen(audio_player_cmd(rate), stdin=subprocess.PIPE)
     else:
-        cmd = True if WIN and winsys.can_play() else audio_player_cmd(22050)
+        cmd = True if OSYS and OSYS.can_play() else audio_player_cmd(22050)
         if not cmd:
             print("no audio player (paplay / aplay) — install libpulse or alsa-utils"); return 1
         print(f"player: {cmd[0]}   (you'll hear him say the same few sentences three times)")
@@ -2236,7 +2427,8 @@ def synth(text: str):
         kp = float(vp.get("kpitch", 1.0))
         return kokoro_synth(text, CFG.get("kokoro_voice") or vp["kokoro"], 1.0 / kp), kp
     if eng == "kokoro":                                       # (the robot preset is espeak on purpose)
-        eng = "piper" if piper_bin() and piper_voice() else "espeak"
+        eng = "piper" if piper_cmd() and piper_voice() else "espeak"
+    text = langmark.unmark(text)                              # piper and espeak just say the words
     pitch = float(vp.get("pitch", 1.0))
     fd, out = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
@@ -2280,6 +2472,7 @@ def save_config(**kw):
         cur = {}
     cur.update(kw)
     CFG.update(kw)
+    Wake.nudge()
     CONF_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONF_PATH.write_text(json.dumps(cur, indent=2) + "\n")
 
@@ -2291,7 +2484,7 @@ def claude_bin():
     if found:
         return found
     for c in (Path.home() / ".local/bin/claude", Path.home() / ".local/bin/claude.exe", Path.home() / ".claude/local/claude",
-              Path("/usr/bin/claude"), Path("/usr/local/bin/claude")):
+              Path("/usr/bin/claude"), Path("/usr/local/bin/claude"), Path("/opt/homebrew/bin/claude")):
         if c.exists():
             return str(c)
     return None
@@ -2352,15 +2545,6 @@ def panel_input(name, inp):
     return out
 
 
-def result_text(c):
-    if isinstance(c, str):
-        return c
-    if isinstance(c, list):
-        return "\n".join(b.get("text", "") if isinstance(b, dict) and b.get("type") == "text" else
-                         ("[image]" if isinstance(b, dict) and b.get("type") == "image" else "") for b in c)
-    return ""
-
-
 def trust():
     return "root" if CFG.get("root_mode") and not WIN else (CFG.get("trust") if CFG.get("trust") in ("ask", "trust", "readonly") else "ask")
 
@@ -2380,7 +2564,8 @@ def hooks_file():
 
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-LEAN_TOOLS = "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"
+# (light mode keeps Agent: the long-lived process and its little Voids are built on his subagents, see agents.py)
+LEAN_TOOLS = "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,Agent"
 
 
 WORKISH = re.compile(r"\b(code|files?|fix|bug|commit|tests?|run|build|refactor|install|folder|project|git|error|script|"
@@ -2396,38 +2581,60 @@ def pick_auto(said, extra, follow):
     return CFG.get("auto_model") or "haiku"
 
 
-def build_cmd(binary, partial):
-    c = [binary, "-p", "--output-format", "stream-json", "--verbose"]
-    if partial:
-        c.append("--include-partial-messages")
+def perm_args():
     tr = trust()
     if tr in ("root", "trust"):
-        c += ["--permission-mode", "bypassPermissions"]
-    elif tr == "readonly":
-        c += ["--permission-mode", "plan"]
-    else:
-        c += ["--permission-mode", "acceptEdits", "--settings", hooks_file()]
-    mdl = CFG["model"]
-    if mdl == "auto":                            # quick chit-chat → the fast model; real work → the default one
-        mdl = ST.auto_pick or ""
-    if mdl:
-        c += ["--model", mdl]
+        return ["--permission-mode", "bypassPermissions"]
+    if tr == "readonly":
+        return ["--permission-mode", "plan"]
+    return ["--permission-mode", "acceptEdits", "--settings", hooks_file()]
+
+
+def usage_args(live=False):
+    """Effort, light mode and the cost stop. The cost stop is per request, so only the one-process-per-message way
+    gets it: in the long-lived process --max-budget-usd would cap the whole chat, not each message."""
+    c = []
     if CFG.get("effort") in EFFORTS:
         c += ["--effort", CFG["effort"]]
     if CFG.get("lean", True):
         c += ["--tools", LEAN_TOOLS, "--disable-slash-commands", "--strict-mcp-config",
               "--exclude-dynamic-system-prompt-sections"]
-    if float(CFG.get("max_cost_usd") or 0) > 0:
+    if not live and float(CFG.get("max_cost_usd") or 0) > 0:
         c += ["--max-budget-usd", str(CFG["max_cost_usd"])]
+    return c
+
+
+def base_prompt():
+    """The system prompt without the memory notes (those change mid-chat: see notes_text())."""
     sp = CFG["voice_prompt"] or ""
     if CFG.get("root_mode"):
         sp += ("\n\nRoot mode is ON: the user allows you to run any command, including ones that need root. "
                "When you need root, use `sudo -A ...` (Void asks the user for the password itself, or fills it in "
                "automatically; never ask for the password in chat). Still be careful: say what you're about to change before destructive or "
                "system-wide actions.")
-    if tr == "ask":
+    if trust() == "ask":
         sp += ("\n\nThe user approves commands and web requests one at a time (Void asks them out loud). "
                "Prefer one clear command over many small ones, and don't retry a command the user said no to.")
+    return sp
+
+
+def pick_model():
+    mdl = CFG["model"]
+    return (ST.auto_pick or "") if mdl == "auto" else mdl       # auto: quick chit-chat → the fast model
+
+
+def build_cmd(binary, partial, live=False):
+    """live: the long-lived process (messages come in on stdin as stream-json; see agents.Brain)."""
+    c = [binary, "-p"] + (["--input-format", "stream-json", "--replay-user-messages"] if live else [])   # (the echo: agents.Stream)
+    c += ["--output-format", "stream-json", "--verbose"]
+    if partial:
+        c.append("--include-partial-messages")
+    c += perm_args()
+    mdl = pick_model()
+    if mdl:
+        c += ["--model", mdl]
+    c += usage_args(live)
+    sp = base_prompt()
     mp = memory_prompt(fresh=not ST.session)
     if mp:
         sp += "\n\n" + mp
@@ -2437,6 +2644,78 @@ def build_cmd(binary, partial):
         c += ["--resume", ST.session]
     c += list(CFG["extra_args"])
     return c
+
+
+def askpass_path(bin_dir=None):
+    """sudo runs SUDO_ASKPASS directly, so askpass.py's `python3` shebang would pick the system interpreter. Point it at
+    a tiny launcher that runs the script on Void's own interpreter instead."""
+    d = Path(bin_dir) if bin_dir else DATA_DIR / "bin"
+    launcher = d / "askpass"
+    body = "#!/bin/sh\nexec '%s' '%s' \"$@\"\n" % (sys.executable.replace("'", "'\\''"), str(APP_DIR / "askpass.py").replace("'", "'\\''"))
+    try:
+        if not launcher.exists() or launcher.read_text() != body:
+            d.mkdir(parents=True, exist_ok=True)
+            tmp = launcher.with_suffix(".tmp")
+            tmp.write_text(body)
+            tmp.chmod(0o700)
+            tmp.replace(launcher)
+        return str(launcher)
+    except OSError:
+        return str(APP_DIR / "askpass.py")
+
+
+def claude_env():
+    env = dict(os.environ)
+    env["PATH"] = str(Path.home() / ".local" / "bin") + os.pathsep + env.get("PATH", "")
+    if sys.platform == "darwin" and "UTF-8" not in (env.get("LC_ALL") or env.get("LC_CTYPE") or env.get("LANG") or "").upper():
+        env["LANG"] = "en_US.UTF-8"   # started outside a terminal → no LANG → pbcopy turns UTF-8 into MacRoman
+        env.pop("LC_ALL", None)
+        env.pop("LC_CTYPE", None)
+    if CFG.get("root_mode") and not WIN:
+        env["SUDO_ASKPASS"] = askpass_path()
+    env["VOID_PORT"], env["VOID_TOKEN"] = str(CFG["port"]), TOOL_TOKEN   # (the limited one: every command Claude runs sees it)
+    return env
+
+
+def brain_launch(binary, partial):
+    """Everything the long-lived process needs for this message (see agents.Brain for what each part restarts)."""
+    return {"cmd": build_cmd(binary, partial, live=True), "perm": (trust(), ST.cwd),
+            "sig": (binary, partial, base_prompt(), tuple(usage_args(live=True)), tuple(CFG["extra_args"])), "session": ST.session,
+            "model": pick_model(), "notes": notes_text(), "cwd": ST.cwd, "env": claude_env()}
+
+
+def describe_tool(name, inp):
+    return summarize_input(inp), panel_input(name, inp)
+
+
+def brain_pub(**ev):
+    if ev.get("t") == "followup":                 # a subagent reported back and he said so: it goes in the history too
+        try:
+            hist_add({"ts": int(time.time()), "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd),
+                      "you": "(a background task finished)", "him": untag(ev.get("text", "")).strip()[-6000:],
+                      "tools": [], "ok": bool(ev.get("ok")), "session": ST.session, "followup": True})
+        except OSError:
+            pass
+    BUS.pub(**ev)
+
+
+def brain_session(sid):
+    if sid and sid != ST.session:
+        ST.session = sid
+        ST.save()
+
+
+def brain_ctx(ev):
+    """The context meter, from the main agent's own requests (see track_context)."""
+    if ev.get("window"):
+        ST.ctx_max = ev["window"]
+        track_context(None)
+    else:
+        track_context(ev.get("usage"))
+
+
+BRAIN = agents.Brain(brain_pub, on_session=brain_session, describe=describe_tool, on_ctx=brain_ctx)
+LONG = {"ok": True}                              # (false once this Claude Code turned out not to take stream-json input)
 
 
 def track_context(usage):
@@ -2488,15 +2767,15 @@ def compact_session():
         return False
     ST.session, ST.notes, ST.ctx_used = None, note[:4000], 0
     ST.save()
-    APPROVALS.reset()
+    end_chat()                                   # (the long-lived process goes too: the next message starts the new chat)
     BUS.pub(t="ctx", compacted=True, **context_info())
     return True
 
 
 def auto_compact():
     """After an answer: if the chat is past `compact_at` of the window, compact it (waits for any run in progress)."""
-    if not ST.lock.acquire(blocking=False):
-        return
+    if BRAIN.running() or not ST.lock.acquire(blocking=False):
+        return                                   # (helpers still working: a new chat would stop them, so not now)
     try:
         compact_session()
     finally:
@@ -2504,17 +2783,14 @@ def auto_compact():
 
 
 def run_claude(prompt, emit, partial):
+    """The old way: one process per message ("long_lived": false, or a Claude Code without stream-json input). Same
+    events; his subagents show too, but he stays busy until they're done (Claude Code waits for them before exiting)."""
     binary = claude_bin()
     if not binary:
         emit(t="error", text=f"Couldn't find Claude Code (`{CFG['claude_bin']}`). Install it, run `claude` once to "
                              f"log in, or set claude_bin in {CONF_PATH}.")
         return "done"
-    env = dict(os.environ)
-    env["PATH"] = str(Path.home() / ".local" / "bin") + os.pathsep + env.get("PATH", "")
-    if CFG.get("root_mode") and not WIN:
-        env["SUDO_ASKPASS"] = str(APP_DIR / "askpass.py")
-    env["VOID_PORT"], env["VOID_TOKEN"] = str(CFG["port"]), TOOL_TOKEN   # (the limited one: every command Claude runs sees it)
-    proc = subprocess.Popen(build_cmd(binary, partial), cwd=ST.cwd, env=env, stdin=subprocess.PIPE,
+    proc = subprocess.Popen(build_cmd(binary, partial), cwd=ST.cwd, env=claude_env(), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1,
                             encoding="utf-8", errors="replace", **spawn_kw())
     ST.proc = proc
@@ -2527,7 +2803,8 @@ def run_claude(prompt, emit, partial):
     except BrokenPipeError:
         pass
 
-    got_result = streamed = emitted = False
+    stream = agents.Stream(describe_tool, oneshot=True)
+    got_result = emitted = False
     for line in proc.stdout:
         line = line.strip()
         if not line:
@@ -2536,60 +2813,24 @@ def run_claude(prompt, emit, partial):
             o = json.loads(line)
         except ValueError:
             continue
-        ty = o.get("type")
-        if ty == "system" and o.get("subtype") == "init":
-            if o.get("session_id"):
-                ST.session = o["session_id"]
-                ST.save()
-            emit(t="init", model=o.get("model", ""))
-        elif ty == "stream_event":
-            ev = o.get("event") or {}
-            d = ev.get("delta") or {}
-            if ev.get("type") == "content_block_delta" and d.get("type") == "text_delta":
-                streamed = emitted = True
-                emit(t="delta", text=d.get("text", ""))
-            elif ev.get("type") == "message_start":
-                emit(t="break")
-        elif ty == "assistant":
-            track_context((o.get("message") or {}).get("usage"))
-            for b in (o.get("message") or {}).get("content") or []:
-                if b.get("type") == "text" and not streamed and b.get("text"):
-                    emitted = True
-                    emit(t="break")
-                    emit(t="delta", text=b["text"])
-                elif b.get("type") == "tool_use":
-                    emitted = True
-                    emit(t="tool", name=b.get("name", "tool"), detail=summarize_input(b.get("input")), id=b.get("id", ""),
-                         input=panel_input(b.get("name", ""), b.get("input")))
-        elif ty == "user":
-            # tool output comes back as a "user" message — the code panel shows it (terminal output, file contents, hits)
-            content = (o.get("message") or {}).get("content")
-            for b in content if isinstance(content, list) else []:
-                if isinstance(b, dict) and b.get("type") == "tool_result":
-                    txt = result_text(b.get("content"))
-                    lines = txt.splitlines()
-                    if len(lines) > 80:
-                        lines = lines[:40] + [f"… {len(lines) - 70} more lines …"] + lines[-30:]
-                    emit(t="toolres", id=b.get("tool_use_id", ""), text=_cut("\n".join(lines), 6000),
-                         is_error=bool(b.get("is_error")))
-        elif ty == "result":
-            got_result = True
-            if o.get("session_id"):
-                ST.session = o["session_id"]
-                ST.save()
-            win = max([int(m.get("contextWindow") or 0) for m in (o.get("modelUsage") or {}).values()
-                       if isinstance(m, dict)] or [0])
-            if win:
-                ST.ctx_max = win
-                track_context(None)
-            denied = o.get("permission_denials") or []
-            if denied:
-                emit(t="denied", tools=sorted({d.get("tool_name", "?") for d in denied}))
-            emit(t="result", text=o.get("result") or "", is_error=bool(o.get("is_error")),
-                 cost=o.get("total_cost_usd"), turns=o.get("num_turns"))
+        for dest, ev in stream.feed(o):
+            if dest == "session":
+                brain_session(ev)
+            elif dest == "ctx":
+                brain_ctx(ev)
+            elif dest == "bus":
+                if ev.get("t") != "followup":         # (its words already came with the rest)
+                    BUS.pub(**ev)
+            else:
+                got_result = got_result or dest == "end"
+                emitted = emitted or ev.get("t") in ("delta", "tool")
+                emit(**ev)
     proc.wait()
     t_err.join(timeout=2)
     ST.proc = None
+    for _, ev in stream.end_all("stopped" if ST.stopped else "failed"):
+        BUS.pub(**ev)
+    agents.kill_tree(proc, grace=0.5)             # (anything it left behind in its group)
     if got_result:
         return "done"
     e = "".join(err).strip()
@@ -2606,7 +2847,9 @@ def run_claude(prompt, emit, partial):
 
 
 def stop_proc():
+    """Stop: his answer (long-lived: his background helpers keep running; one-shot: the process goes, and they with it)."""
     APPROVALS.cancel_all()
+    BRAIN.stop()
     p = ST.proc
     if p and p.poll() is None:
         ST.stopped = True
@@ -2618,6 +2861,13 @@ def stop_proc():
             os.killpg(p.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+
+
+def end_chat(wait=False):
+    """A new chat, a resumed one, another folder, quitting: the process and its subagents go, and so do their cards."""
+    APPROVALS.cancel_all()
+    BRAIN.shutdown(wait=wait)
+    APPROVALS.reset()
 
 
 # ---------------------------------------------------------------- updates
@@ -2917,11 +3167,11 @@ def diagnostics():
 def state_info():
     return {
         "version": VERSION, "update": Updates.status(), "update_check": bool(CFG.get("update_check", True)),
-        "platform": "windows" if WIN else "linux", "ptt_hotkey": CFG.get("ptt_hotkey", "") or "",
+        "platform": "windows" if WIN else "macos" if MAC else "linux", "ptt_hotkey": CFG.get("ptt_hotkey", "") or "",
         "presence": "bar" if CFG.get("presence") == "bar" else "orb",
         "bar_edge": CFG.get("bar_edge") if CFG.get("bar_edge") in ("top", "bottom", "left", "right") else "top",
         "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd), "session": bool(ST.session),
-        "tts": tts_engine(), "mic": WIN or bool(mic_cmds()), "stt": "ready" if _whisper else (_whisper_err or "loading"),
+        "tts": tts_engine(), "mic": bool(OSYS) or bool(mic_cmds()), "stt": "ready" if _whisper else (_whisper_err or "loading"),
         "trust": trust(), "model": CFG["model"] or "default", "effort": CFG.get("effort") or "", "lean": bool(CFG.get("lean", True)), "max_cost_usd": CFG.get("max_cost_usd") or 0,
         "compact_tokens": CFG.get("compact_tokens") or 0, "root": bool(CFG.get("root_mode")) and not WIN, "root_ok": not WIN,
 
@@ -2933,7 +3183,7 @@ def state_info():
         "projects": quick.projects(),
         "quick_actions": CFG.get("quick_actions") or [], "memory_count": len(mem_load()),
         "mic_device": CFG.get("mic_device") or "", "whisper_model": CFG.get("whisper_model") or "auto",
-        "can_shoot": WIN or any(shutil.which(t) for t in ("grim", "spectacle", "gnome-screenshot", "maim", "scrot", "import")),
+        "can_shoot": bool(OSYS) or any(shutil.which(t) for t in ("grim", "spectacle", "gnome-screenshot", "maim", "scrot", "import")),
         "eye_color": CFG.get("eye_color") or "#3d9b74", "eye_white": CFG.get("eye_white") or "#f3dccf",
         "pupil_style": CFG.get("pupil_style") or "slit",
         "voice": CFG.get("voice") or "girl", "voice_pitch": voice_preset().get("pitch", 1.0),
@@ -2944,6 +3194,7 @@ def state_info():
                    for k, v in VOICES.items()],
         "voice_engine": tts_engine() or "none",
         "claude": bool(claude_bin()), "busy": ST.lock.locked(), "config": str(CONF_PATH),
+        "subagents": BRAIN.running(),
         "context": context_info(), "recall": recall.stats(), "auto_compact": bool(CFG.get("auto_compact", True)), "full_text": bool(CFG.get("full_text")),
     }
 
@@ -2951,6 +3202,180 @@ def state_info():
 # ---------------------------------------------------------------- http
 CTYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css",
           ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json"}
+
+
+def session_message(said, prompt, send_ev, *, extra="", follow=False, attach=None):
+    """Run a message through the voice session path. The caller holds ST.lock."""
+    ST.auto_pick = pick_auto(said, extra, follow)
+    rec = {"ts": int(time.time()), "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd), "you": said or "(attachment)",
+           "him": "", "tools": [], "ok": True,
+           "attach": [a.get("label") for a in attach or [] if isinstance(a, dict)]}
+
+    # a follow-up: hold back his first words until we know it isn't "[ignore]"
+    gate = {"open": not follow, "held": [], "text": "", "ignored": False}
+
+    def emit(**kw):
+        if not gate["open"]:
+            t = kw.get("t")
+            if t in ("delta", "result"):
+                gate["text"] += kw.get("text", "") if t == "delta" else ("" if gate["text"] else kw.get("text", ""))
+            said_so_far = gate["text"].strip().lower()
+            if said_so_far.startswith(IGNORE):                   # not meant for him: drop the whole reply
+                gate["open"] = gate["ignored"] = True
+                return send_ev({"t": "ignored"})
+            if t == "delta" and IGNORE.startswith(said_so_far):    # could still turn into "[ignore]"
+                gate["held"].append(kw)
+                return
+            if t in ("delta", "tool", "result", "error", "stopped"):  # it's a real answer: let it all through
+                gate["open"] = True
+                for h in gate["held"]:
+                    real_emit(**h)
+                gate["held"].clear()
+            else:
+                gate["held"].append(kw)
+                return
+        if gate["ignored"]:
+            return
+        real_emit(**kw)
+
+    def real_emit(**kw):
+        t = kw.get("t")
+        if t == "delta":
+            rec["him"] += kw.get("text", "")
+        elif t == "break" and rec["him"] and not rec["him"].endswith("\n\n"):
+            rec["him"] += "\n\n"
+        elif t == "tool" and len(rec["tools"]) < 30:
+            rec["tools"].append(kw.get("name"))
+            if kw.get("name") in recall.EDIT_TOOLS and kw.get("detail"):
+                rec.setdefault("files", []).append(os.path.basename(kw["detail"].rstrip("…")))
+        elif t == "result":
+            if not rec["him"].strip() and kw.get("text"):
+                rec["him"] = kw["text"]
+            rec["ok"] = not kw.get("is_error")
+        elif t == "error":
+            rec["ok"] = False
+            rec["him"] = rec["him"] or kw.get("text", "")
+        send_ev(kw)
+
+    ST.stopped = False
+    partial = bool(CFG["partial_messages"])
+    for _ in range(3):
+        binary = claude_bin() if CFG.get("long_lived", True) and LONG["ok"] else None
+        r = BRAIN.ask(brain_launch(binary, partial), prompt, emit) if binary else run_claude(prompt, emit, partial)
+        if r == "unsupported":             # an older Claude Code: one process per message, like before
+            LONG["ok"] = False
+            continue
+        if r == "retry_nopartial":
+            partial = False
+            continue
+        if r == "retry_fresh":
+            end_chat()
+            ST.session, ST.ctx_used = None, 0
+            ST.save()
+            emit(t="note", text="previous session couldn't be resumed — started fresh")
+            continue
+        break
+    if gate["ignored"]:
+        return None
+    rec["session"] = ST.session
+    rec["him"] = untag(rec["him"]).strip()[-6000:]
+    try:
+        ST.last_worked = bool(rec["tools"])
+        hist_add(rec)
+        recall.add(rec)
+    except Exception as e:  # noqa: BLE001  (a notes problem must never break an answer)
+        print(f"[void] history/quick memory: {e}", file=sys.stderr)
+    emit(t="done")
+    return rec
+
+
+def lock_wait():
+    """How long your message waits for the session: tidying notes or an inbox alert finishes first (you didn't start
+    either, so don't refuse); while he's on your own last message it's refused at once."""
+    return 180 if ST.compacting else 600 if ST.alerting else 0
+
+
+class InboxFollower:
+    """Tail alerts from this run only; the unread file queues them while Claude is busy."""
+    def __init__(self, path=None):
+        self.path = Path(path) if path is not None else Path.home() / ".local/share/void-watch/inbox.log"
+        self.offset = 0
+        self.pending = b""
+        self.identity = None
+        self.discard = False
+        try:
+            with self.path.open("rb") as f:
+                st = os.fstat(f.fileno())
+                self.identity = (st.st_dev, st.st_ino)
+                self.offset = f.seek(0, os.SEEK_END)
+                if self.offset:
+                    f.seek(-1, os.SEEK_END)
+                    self.discard = f.read(1) != b"\n"
+        except OSError:
+            pass                            # claude-ping may create the inbox later
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=1)
+
+    def read_lines(self):
+        with self.path.open("rb") as f:
+            st = os.fstat(f.fileno())
+            identity = (st.st_dev, st.st_ino)
+            if identity != self.identity or st.st_size < self.offset:
+                self.offset, self.pending, self.discard = 0, b"", False
+            self.identity = identity
+            f.seek(self.offset)
+            data = f.read()
+            self.offset = f.tell()
+        lines = (self.pending + data).split(b"\n")
+        self.pending = lines.pop()
+        for raw in lines:
+            if self.discard:
+                self.discard = False
+                continue
+            line = raw.decode("utf-8", errors="replace").rstrip("\r")
+            if not line or re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[claude\] atom Stop", line):
+                continue
+            yield line
+
+    def deliver(self, line):
+        while not self.stop.is_set():
+            if not ST.lock.acquire(timeout=0.2):
+                continue
+            try:
+                if self.stop.is_set():
+                    return
+                ST.alerting = True
+                BUS.pub(t="followup_soon", id="inbox")   # (otherwise he looks idle while your messages wait)
+                rec = session_message(line, line, lambda ev: None)
+                if rec:
+                    BUS.pub(t="followup", text=rec["him"], ok=rec["ok"])
+            finally:
+                ST.alerting = False
+                ST.lock.release()
+            if CFG.get("auto_compact", True) and ST.ctx_used >= ctx_scale() * float(CFG.get("compact_at") or 0.7):
+                auto_compact()
+            return
+
+    def run(self):
+        while not self.stop.is_set():
+            try:
+                for line in self.read_lines():
+                    if self.stop.is_set():
+                        return
+                    self.deliver(line)
+            except FileNotFoundError:
+                pass
+            except Exception as e:  # noqa: BLE001
+                print(f"[void] inbox: {e}", file=sys.stderr)
+            self.stop.wait(0.25)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2983,6 +3408,8 @@ class Handler(BaseHTTPRequestHandler):
             if secrets.compare_digest(self.headers.get("X-Void-Token") or "", TOKEN):
                 return self._json(state_info())
             return self._json({"version": VERSION})
+        if p == "/api/id":                         # which run this is (not a secret; never waits on the mic, unlike the state)
+            return self._json({"id": RUN_ID})
         if p == "/":
             p = "/index.html"
         f = (STATIC / p.lstrip("/")).resolve()
@@ -3019,9 +3446,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_response(204)
                     self.end_headers()
                     return None
+                note_spoken(text)
                 audio, rate = synth(text)
-                audio, words = tidy_and_time(audio, text)
-                pause = 0.3 if re.search(r"[.!?]['\")]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
+                audio, words = tidy_and_time(audio, langmark.unmark(text))
+                pause = 0.3 if re.search(r"[.!?]['\")}]*$", text) else 0.14 if re.search(r"[,;:—–]$", text) else 0.06
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/wav")
                 self.send_header("X-Void-Rate", f"{rate:.3f}")
@@ -3054,6 +3482,7 @@ class Handler(BaseHTTPRequestHandler):
                     Wake.hush()
                     if Listen.current:
                         Listen.current.stop(cancel=True)
+                Wake.nudge()
                 return self._json({"ok": True, "asleep": Wake.asleep})
             if p == "/api/follow":
                 Wake.end_follow("finish" if json.loads(self._body() or b"{}").get("act") == "finish" else "cancel")
@@ -3066,6 +3495,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/stop":
                 stop_proc()
                 return self._json({"ok": True})
+            if p == "/api/copy":
+                return self._json({"ok": set_clipboard(str(json.loads(self._body() or b"{}").get("text") or ""))})
             if p == "/api/diagnostics":
                 return self._json({"text": diagnostics()})
             if p == "/api/report":                 # opens GitHub's "new issue" page — only ever this one address
@@ -3146,8 +3577,11 @@ class Handler(BaseHTTPRequestHandler):
                             qa.append({"label": str(a["label"]).strip()[:40], "prompt": str(a["prompt"]).strip()[:1000],
                                        **({"attach": a["attach"]} if a.get("attach") in ("screen", "clipboard") else {})})
                     upd["quick_actions"] = qa
+                was = trust()
                 if upd:
                     save_config(**upd)
+                if trust() != was:
+                    end_chat()
                 if "whisper_model" in upd:
                     reset_whisper()
                 if "autostart" in upd:
@@ -3165,10 +3599,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"handled": True, "say": mem, "mood": "happy", "state": state_info()})
                 r = quick.handle(said)
                 if r and r.get("cd"):
+                    end_chat()
                     ST.cwd = r["cd"]
                     ST.fresh()
                     ST.save()
-                    APPROVALS.reset()
                     r["state"] = state_info()
                 return self._json({"handled": bool(r), **(r or {})})
             if p == "/api/projects":
@@ -3189,7 +3623,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "why": "just looking at the screen"})
                 if b.get("tool") in EDIT_TOOLS and not edit_needs_card(edit_path(b.get("input"))):
                     return self._json({"ok": True})                       # an ordinary edit in the project: no card
-                return self._json(APPROVALS.ask(str(b.get("tool") or "?"), b.get("input") or {}))
+                agent = BRAIN.agent_info(b.get("agent_id"), b.get("agent_type"))
+                return self._json(APPROVALS.ask(str(b.get("tool") or "?"), b.get("input") or {}, agent=agent))
             if p == "/api/askpass":                   # askpass.py (sudo -A) is waiting for the password
                 if WIN or not CFG.get("root_mode"):   # the password card only exists in root mode
                     return self._json({"error": "root mode is off"}, 403)
@@ -3256,10 +3691,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": f"that folder is gone: {pretty_path(d)}"}, 400)
                 if not d_path.is_dir():
                     return self._json({"error": f"that folder is gone: {pretty_path(str(d_path))}"}, 400)
+                end_chat()
                 ST.cwd = str(d_path)
                 ST.fresh(b.get("session") or None)
                 ST.save()
-                APPROVALS.reset()
                 return self._json(state_info())
             if p == "/api/devices":
                 return self._json({"mics": list_mics()})
@@ -3273,19 +3708,19 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     ST.lock.release()
             if p == "/api/new":
+                end_chat()
                 ST.fresh()
                 ST.save()
-                APPROVALS.reset()
                 return self._json(state_info())
             if p == "/api/cd":
                 raw = json.loads(self._body() or b"{}").get("path", "~")
                 path = os.path.abspath(os.path.join(ST.cwd, os.path.expanduser(raw.strip() or "~")))
                 if not os.path.isdir(path):
                     return self._json({"error": f"not a directory: {pretty_path(path)}"}, 400)
+                end_chat()
                 ST.cwd = path
                 ST.fresh()
                 ST.save()
-                APPROVALS.reset()
                 return self._json(state_info())
             return self._json({"error": "not found"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -3331,6 +3766,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             Listen.current = None
             Listen.lock.release()
+            Wake.nudge()                         # (the wake word can have the mic back)
         return None
 
     def events(self):
@@ -3360,8 +3796,7 @@ class Handler(BaseHTTPRequestHandler):
             prompt = FOLLOW_NOTE + said
         if not prompt:
             return self._json({"error": "empty prompt"}, 400)
-        ST.auto_pick = pick_auto(said, extra, follow)
-        if not ST.lock.acquire(timeout=180 if ST.compacting else 0):    # (tidying its notes: wait, don't refuse)
+        if not ST.lock.acquire(timeout=lock_wait()):
             return self._json({"error": "still working on the last one"}, 409)
         try:
             self.send_response(200)
@@ -3370,61 +3805,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             alive = [True]
 
-            rec = {"ts": int(time.time()), "cwd": ST.cwd, "cwd_display": pretty_path(ST.cwd), "you": said or "(attachment)",
-                   "him": "", "tools": [], "ok": True,
-                   "attach": [a.get("label") for a in body.get("attach") or [] if isinstance(a, dict)]}
-
-            # a follow-up: hold back his first words until we know it isn't "[ignore]"
-            gate = {"open": not follow, "held": [], "text": "", "ignored": False}
-
-            def emit(**kw):
-                if not gate["open"]:
-                    t = kw.get("t")
-                    if t in ("delta", "result"):
-                        gate["text"] += kw.get("text", "") if t == "delta" else ("" if gate["text"] else kw.get("text", ""))
-                    said_so_far = gate["text"].strip().lower()
-                    if said_so_far.startswith(IGNORE):                   # not meant for him: drop the whole reply
-                        gate["open"] = gate["ignored"] = True
-                        return send_ev({"t": "ignored"})
-                    if t == "delta" and IGNORE.startswith(said_so_far):    # could still turn into "[ignore]"
-                        gate["held"].append(kw)
-                        return
-                    if t in ("delta", "tool", "result", "error", "stopped"):  # it's a real answer: let it all through
-                        gate["open"] = True
-                        for h in gate["held"]:
-                            real_emit(**h)
-                        gate["held"].clear()
-                    else:
-                        gate["held"].append(kw)
-                        return
-                if gate["ignored"]:
-                    return
-                real_emit(**kw)
-
             def send_ev(kw):
-                try:
-                    self.wfile.write(b"data: " + json.dumps(kw).encode() + b"\n\n")
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    alive[0] = False
-
-            def real_emit(**kw):
-                t = kw.get("t")
-                if t == "delta":
-                    rec["him"] += kw.get("text", "")
-                elif t == "break" and rec["him"] and not rec["him"].endswith("\n\n"):
-                    rec["him"] += "\n\n"
-                elif t == "tool" and len(rec["tools"]) < 30:
-                    rec["tools"].append(kw.get("name"))
-                    if kw.get("name") in recall.EDIT_TOOLS and kw.get("detail"):
-                        rec.setdefault("files", []).append(os.path.basename(kw["detail"].rstrip("…")))
-                elif t == "result":
-                    if not rec["him"].strip() and kw.get("text"):
-                        rec["him"] = kw["text"]
-                    rec["ok"] = not kw.get("is_error")
-                elif t == "error":
-                    rec["ok"] = False
-                    rec["him"] = rec["him"] or kw.get("text", "")
                 if not alive[0]:
                     return
                 try:
@@ -3434,31 +3815,8 @@ class Handler(BaseHTTPRequestHandler):
                     alive[0] = False
                     stop_proc()
 
-            ST.stopped = False
-            partial = bool(CFG["partial_messages"])
-            for _ in range(3):
-                r = run_claude(prompt, emit, partial)
-                if r == "retry_nopartial":
-                    partial = False
-                    continue
-                if r == "retry_fresh":
-                    ST.session, ST.ctx_used = None, 0
-                    ST.save()
-                    APPROVALS.reset()
-                    emit(t="note", text="previous session couldn't be resumed — started fresh")
-                    continue
-                break
-            if gate["ignored"]:
+            if session_message(said, prompt, send_ev, extra=extra, follow=follow, attach=body.get("attach")) is None:
                 return
-            rec["session"] = ST.session
-            rec["him"] = untag(rec["him"]).strip()[-6000:]
-            try:
-                ST.last_worked = bool(rec["tools"])
-                hist_add(rec)
-                recall.add(rec)
-            except Exception as e:  # noqa: BLE001  (a notes problem must never break an answer)
-                print(f"[void] history/quick memory: {e}", file=sys.stderr)
-            emit(t="done")
         finally:
             ST.lock.release()
         if CFG.get("auto_compact", True) and ST.ctx_used >= ctx_scale() * float(CFG.get("compact_at") or 0.7):
@@ -3533,9 +3891,11 @@ def main():
     if args.print_port:
         print(CFG["port"])
         return
+    inbox = InboxFollower()                 # capture EOF before starting any background work
     if CFG["stt_prewarm"] or CFG.get("wake_word"):
         threading.Thread(target=lambda: _try(whisper), daemon=True).start()
     _wire_quick()
+    resync_launch_agent()
     threading.Thread(target=warm_tts, daemon=True).start()
     Wake.ensure()
     Updates.start()
@@ -3545,15 +3905,29 @@ def main():
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         fd = os.open(rt, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"port": CFG["port"], "token": TOKEN, "tool_token": TOOL_TOKEN}, f)
+            json.dump({"port": CFG["port"], "token": TOKEN, "tool_token": TOOL_TOKEN, "id": RUN_ID, "pid": os.getpid()}, f)
     except OSError:
         pass
     srv.daemon_threads = True
+    inbox.start()
+
+    def bye(*_):
+        raise SystemExit(0)                    # (→ atexit below)
+    atexit.register(lambda: (end_chat(wait=True), ST.proc and agents.kill_tree(ST.proc, grace=0.5)))
+    atexit.register(inbox.close)
+    for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)):
+        if sig is not None:
+            try:
+                signal.signal(sig, bye)
+            except (OSError, ValueError):
+                pass
     print(f"[void] http://127.0.0.1:{CFG['port']}/  cwd={ST.cwd}  tts={tts_engine()}", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        inbox.close()
 
 
 def _try(fn):
