@@ -20,6 +20,8 @@ Say “hey Void” and he does the work.</p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3d9b74?style=flat-square" alt="MIT license"></a>
 </p>
 
+<p align="center"><a href="https://discord.gg/Y87KGhqbK5"><img src="https://img.shields.io/badge/Join_our_Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40" alt="Join our Discord"></a></p>
+
 <br>
 
 <table>
@@ -69,6 +71,47 @@ Void is a little orb that floats on your desktop. Tell him what you want, and he
 </td>
 <td valign="top">
 
+<p align="center"><a href="#linux-one-line-install"><img src="https://img.shields.io/badge/Copy-one_line-333333?style=for-the-badge&logo=linux&logoColor=white" alt="Copy the one-line Linux install"></a></p>
+
+1. Paste the line below into a terminal.
+2. Wait a few minutes while it sets up his voice and hearing.
+3. Run <code>void</code>.
+
+<sub>Ubuntu, Debian, Fedora and Arch.<br>Other ways to install are below.</sub>
+
+</td>
+</tr>
+<tr>
+<th colspan="2"><img src="https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS"></th>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+<p align="center"><a href="https://github.com/ohshitgorillas/void/tree/macos"><img src="https://img.shields.io/badge/Get-macOS_branch-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Get the macOS branch"></a></p>
+
+1. Open the <b>macos</b> branch of the fork.
+2. Follow its install steps.
+3. Find <b>Void</b> in Applications.
+
+<sub>Community-maintained fork.<br>Not tested by the main project.</sub>
+
+</td>
+</tr>
+</table>
+
+### Linux: one-line install
+
+Paste it into a terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PLAYER99-void/void/main/get.sh | bash
+```
+
+It sets up Void, his voice and hearing, and starts him. Updates itself from his settings.
+
+<details>
+<summary><b>Other ways to install</b> (.deb · .rpm · Arch · source)</summary>
+
 <p align="center">
 <img src="https://img.shields.io/badge/-Ubuntu-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu">
 <img src="https://img.shields.io/badge/-Debian-A81D33?style=flat-square&logo=debian&logoColor=white" alt="Debian">
@@ -76,18 +119,9 @@ Void is a little orb that floats on your desktop. Tell him what you want, and he
 <img src="https://img.shields.io/badge/-Arch_Linux-1793D1?style=flat-square&logo=archlinux&logoColor=white" alt="Arch Linux">
 </p>
 
-**One line, any distro.** Paste it into a terminal:
+The line above picks the right package for your system. On a distro without one, it installs from source.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/PLAYER99-void/void/main/get.sh | bash
-```
-
-It picks the right package for your system, downloads and installs it with everything it needs, sets up his
-voice and hearing, and starts him. On a distro without a package, it gets the source and installs that instead.
-**Update now** in his settings keeps him current either way.
-
-<details>
-<summary><b>Or download a package yourself</b> (.deb · .rpm · Arch)</summary>
+**Or download a package yourself** (.deb · .rpm · Arch)
 
 <p align="center">
 <a href="https://github.com/PLAYER99-void/void/releases/latest"><img src="https://img.shields.io/badge/Ubuntu_%2F_Debian-.deb-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download the .deb for Ubuntu and Debian"></a><br>
@@ -105,10 +139,7 @@ Download the one for your distro from the [latest release](https://github.com/PL
 
 Then `void setup` once (his voice and hearing) and `void`.
 
-</details>
-
-<details>
-<summary><b>Or from source</b> (git clone)</summary>
+**Or from source** (git clone)
 
 ```bash
 git clone https://github.com/PLAYER99-void/void.git
@@ -118,13 +149,14 @@ void
 
 It gets the system packages for you (pacman, apt or dnf) and updates itself with `git pull`.
 
-</details>
-
 <sub>Gentoo or system-wide? See the <a href="docs/GUIDE.md#install-from-source">guide</a>.</sub>
 
-</td>
-</tr>
-</table>
+</details>
+
+> [!NOTE]
+> The Mac version lives on the [`macos` branch of `ohshitgorillas/void`](https://github.com/ohshitgorillas/void/tree/macos),
+> a fork of Void kept up to date with the main project. It is built and tested on macOS by the fork's maintainer; the
+> main project's author doesn't have a Mac and can't vouch for it.
 
 ### macOS
 
@@ -212,6 +244,7 @@ Run **`void doctor`** first. It checks your mic, his voice and Claude Code in a 
 | "I can't find Claude Code" | Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and run `claude` once to sign in. |
 | Windows: "DLL load failed" | Install the [Visual C++ runtime](https://aka.ms/vs/17/release/vc_redist.x64.exe), then `void restart`. |
 | Something else | Right-click him → Settings → More → **Copy diagnostics**, then **Report a problem** and paste it. Or see [Troubleshooting](docs/GUIDE.md#troubleshooting). |
+| Want to chat or share what you built | Join the [Void Discord](https://discord.gg/Y87KGhqbK5). |
 
 <br>
 
