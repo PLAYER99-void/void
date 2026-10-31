@@ -3,296 +3,562 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Void: talk to your code</title>
+<title>void: say hey void</title>
 <meta name="description" content="Void is a little orb on your desktop. Say “hey Void” and he gets Claude Code to do the work in your project. Free and open source for Windows, macOS and Linux.">
-<meta name="color-scheme" content="dark">
-<meta property="og:title" content="Void: talk to your code">
+<meta name="theme-color" content="#f9f9f9">
+<meta property="og:title" content="void: say hey void">
 <meta property="og:description" content="A little orb on your desktop. Say “hey Void” and he does the work. Free, open source, private.">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://player99-void.github.io/void/icon.png">
 <link rel="icon" href="icon.png">
+<link rel="preload" href="fonts/fredoka.woff2" as="font" type="font/woff2" crossorigin>
+<script>document.documentElement.classList.add("js")</script>
 <style>
-:root{--bg:#0b0b0b;--panel:#131313;--line:#232323;--text:#f3f3f3;--dim:#a8a8a8;--acc:#3d9b74;--hot:#7fd6ae;--sclera:#f3dccf;
-  --ease:cubic-bezier(.22,1,.36,1);--mono:ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace}
+@font-face{font-family:"Fredoka";font-weight:400 700;font-display:swap;src:url(fonts/fredoka.woff2) format("woff2")}
+:root{--bg:#f9f9f9;--ink:#2a2b2c;--dim:#7a7d80;--line:#e4e4e4;--soft:#efefef;--acc:#3d9b74;
+  --out:cubic-bezier(.16,1,.3,1);--mono:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace}
 *{box-sizing:border-box}
-html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--text);font:17px/1.6 system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
-  background-image:radial-gradient(60% 40% at 50% 0%,#12261d 0%,transparent 70%);background-repeat:no-repeat}
-a{color:var(--hot);text-decoration-thickness:1px;text-underline-offset:3px}
-a:hover{color:#fff}
-:focus-visible{outline:2px solid var(--hot);outline-offset:3px;border-radius:6px}
-.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
-h1,h2,h3{line-height:1.15;margin:0;letter-spacing:-.02em}
-h2{font-size:clamp(26px,4vw,36px);margin-bottom:10px}
-h3{font-size:19px;margin-bottom:6px}
-p{margin:0 0 14px}
-.dim{color:var(--dim)}
-section{padding:72px 0}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:500 16px/1.4 "Fredoka",ui-rounded,"Arial Rounded MT Bold",system-ui,sans-serif;
+  letter-spacing:-.03em;text-transform:lowercase;overflow-x:hidden}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:4px}
+code{font-family:var(--mono);letter-spacing:0;text-transform:none;font-size:.9em}
+h1,h2,h3,p{margin:0}
+.big{font-weight:700;letter-spacing:-.06em;line-height:.86}
 
-/* top bar */
-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0}
-nav .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px;color:var(--text);text-decoration:none}
-nav .brand img{width:32px;height:32px}
-nav .links{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-nav .links a{color:var(--dim);text-decoration:none;padding:6px 10px;border-radius:8px;font-size:15px}
-nav .links a:hover{color:var(--text);background:#ffffff12}
+/* ---- the reference's motion -------------------------------------------------------------------------------------- */
+/* headings: each letter rises into place (translateY 12.5%, 1.2s, ease-out), one after another */
+.js [data-split] .ch{display:inline-block;opacity:0;transform:translateY(12.5%)}
+.js [data-split].in .ch{animation:charReveal 1.2s var(--out) forwards;animation-delay:calc(var(--i) * 45ms)}
+[data-split] .w{display:inline-block;white-space:nowrap}
+@keyframes charReveal{to{opacity:1;transform:none}}
+/* pictures of him fade in once they're there */
+.js .fade{opacity:0;transition:opacity .5s ease-in-out .3s}
+.js .fade.on{opacity:1}
+/* the cursor: a soft blurred disc, and glyphs that trail behind it */
+#cursor{position:fixed;left:0;top:0;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;pointer-events:none;z-index:9999;
+  background:rgba(42,43,44,.15);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);opacity:0;
+  transition:opacity .2s,width .25s var(--out),height .25s var(--out),margin .25s var(--out)}
+#cursor.on{opacity:1}
+#cursor.big{width:64px;height:64px;margin:-32px 0 0 -32px}
+#trail{position:fixed;inset:0;pointer-events:none;z-index:9998}
+#trail span{position:absolute;font-size:14px;color:#aaa;opacity:0;transition:opacity .15s ease-out;line-height:1;text-transform:none}
+#trail span.on{opacity:1}
 
-/* hero */
-.hero{text-align:center;padding:36px 0 56px}
-.orb{width:170px;height:170px;margin:0 auto 22px;position:relative}
-.orb img{width:100%;height:100%;display:block;position:relative;animation:bob 6s ease-in-out infinite}
-.orb::before{content:"";position:absolute;inset:-26px;border-radius:50%;background:radial-gradient(circle,#3d9b7466 0%,transparent 68%);animation:glow 4s ease-in-out infinite}
-.orb::after{content:"";position:absolute;left:18%;right:18%;bottom:-20px;height:16px;border-radius:50%;background:#000;filter:blur(9px);opacity:.7}
-@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
-@keyframes glow{0%,100%{opacity:.7;transform:scale(1)}50%{opacity:1;transform:scale(1.07)}}
-.hero h1{font-size:clamp(38px,7vw,64px);margin-bottom:14px}
-.hero h1 em{font-style:normal;color:var(--hot)}
-.hero .sub{font-size:clamp(18px,2.4vw,21px);color:var(--dim);max-width:600px;margin:0 auto 28px}
-.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:999px;font-weight:650;font-size:16px;text-decoration:none;border:1px solid var(--line);
-  color:var(--text);background:var(--panel);transition:transform .25s var(--ease),border-color .25s,background .25s}
-.btn:hover{transform:translateY(-2px);border-color:var(--acc);color:#fff}
-.btn.main{background:var(--acc);border-color:var(--acc);color:#06130d}
-.btn.main:hover{background:var(--hot);border-color:var(--hot);color:#06130d}
-.hero .note{font-size:14px;color:var(--dim)}
+/* ---- top bar --------------------------------------------------------------------------------------------------- */
+nav{position:absolute;z-index:20;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:center;padding:18px 3%;font-size:15px}
+nav a{text-decoration:none}
+nav a:hover{text-decoration:underline}
+nav .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:18px}
+nav .brand img{width:26px;height:26px}
+nav .links{display:flex;gap:20px}
 
-/* demo frames */
-.shot{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden}
-.shot img{display:block;width:100%;height:auto}
-.split{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
-.split .shot{max-width:380px;width:100%;justify-self:center}
-.split.flip .shot{order:2}
-ul.ticks{list-style:none;margin:16px 0 0;padding:0}
-ul.ticks li{position:relative;padding-left:28px;margin-bottom:10px}
-ul.ticks li::before{content:"";position:absolute;left:0;top:.5em;width:12px;height:12px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 4px #3d9b7433}
+/* ---- his live face (app/static/index.html as face.html, 340x460, scaled up; only his stage shows) ----------------- */
+.face{position:relative;aspect-ratio:340/330;
+  -webkit-mask-image:radial-gradient(closest-side,#000 70%,transparent 100%);mask-image:radial-gradient(closest-side,#000 70%,transparent 100%)}   /* his glow is wider than the frame: fade it out */
+.face iframe{position:absolute;left:0;top:0;width:340px;height:460px;border:0;transform-origin:0 0;pointer-events:none;background:transparent}
 
-/* steps */
-.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:28px;counter-reset:s}
-.step{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;counter-increment:s}
-.step::before{content:counter(s);display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#3d9b7426;color:var(--hot);font-weight:700;margin-bottom:12px}
-.quote{font-family:var(--mono);font-size:14px;color:var(--hot)}
+/* ---- hero ------------------------------------------------------------------------------------------------------ */
+.hero{position:relative;height:100svh;min-height:620px;overflow:visible}
+.hero .face{z-index:15;pointer-events:none}
+html.dragging,html.dragging *{cursor:grabbing!important;user-select:none}
+.hero .face{position:absolute;left:-7vw;top:-3vw;width:min(70vw,980px)}
+.hero-text{position:absolute;right:3%;top:5%;text-align:right;z-index:1;pointer-events:none}
+.hero-text h1{font-size:clamp(68px,11vw,176px)}
+.hero-text p{margin-top:22px;font-size:18px;color:var(--dim);max-width:330px;margin-left:auto;line-height:1.35}
 
-/* features */
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:30px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden;display:flex;flex-direction:column}
-.card .body{padding:16px 18px 20px}
-.card p{color:var(--dim);font-size:15px;margin:0}
-.card img{display:block;width:100%;height:auto;aspect-ratio:17/16;object-fit:cover;background:#000}
+/* ---- he becomes a notch: a screen, with his live face docked at its top edge --------------------------------------- */
+.notch{padding:140px 3% 60px}
+.notch h2{font-size:clamp(56px,10vw,150px)}
+.notch p{margin-top:16px;font-size:18px;line-height:1.35;color:var(--dim);max-width:520px}
+.screen{position:relative;margin:50px auto 0;width:min(1000px,100%);aspect-ratio:16/9;border-radius:22px;overflow:hidden;cursor:pointer;
+  background:linear-gradient(160deg,#dfe7e3,#c9d6d0 55%,#b7c8c0);box-shadow:0 30px 60px rgba(42,43,44,.14),inset 0 0 0 10px #1c1d1e}
+.screen .face{position:absolute;left:50%;top:10px;width:min(48%,460px);transform:translateX(-50%);-webkit-mask-image:none;mask-image:none}
+.screen .hint{position:absolute;right:26px;bottom:20px;font-size:14px;color:#4b5a54}
+/* ---- info: a small column of plain words ----------------------------------------------------------------------- */
+.info{max-width:600px;margin:0 auto;padding:200px 24px 260px}
+.info p{font-size:18px;line-height:1.35}
+.info p+p{margin-top:22px}
+.info p:first-child{font-weight:650}
 
-/* install */
-.tabs{display:flex;gap:8px;margin:28px 0 14px;flex-wrap:wrap}
-.tab{font:inherit;font-size:15px;font-weight:600;color:var(--dim);background:var(--panel);border:1px solid var(--line);padding:9px 18px;border-radius:999px;cursor:pointer}
-.tab[aria-selected="true"]{color:#06130d;background:var(--acc);border-color:var(--acc)}
-.pane{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px}
-.pane[hidden]{display:none}
-.pane ol{margin:12px 0 0;padding-left:22px}
-.pane li{margin-bottom:6px}
-.code{display:flex;align-items:center;gap:10px;background:#070707;border:1px solid var(--line);border-radius:12px;padding:10px 12px 10px 14px;margin:14px 0;font-family:var(--mono);font-size:14px;overflow-x:auto}
-.code code{flex:1;white-space:nowrap}
-.copy{font:inherit;font-size:13px;font-weight:600;color:var(--text);background:#1c1c1c;border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
-.copy:hover{border-color:var(--acc)}
-.small{font-size:14px;color:var(--dim)}
-.need{margin-top:22px;padding:16px 18px;border-left:3px solid var(--acc);background:#3d9b7414;border-radius:0 12px 12px 0}
+/* ---- the circle of his looks ----------------------------------------------------------------------------------- */
+.pack{position:relative;width:min(760px,94vw);aspect-ratio:1;margin:0 auto;border-radius:50%;background:var(--soft)}
+.pack .item{position:absolute;transform:translate(-50%,-50%)}
+/* each one is a small window onto his live page (face.html), cropped to just his ball */
+.disc{position:relative;width:100%;aspect-ratio:1;border-radius:50%;overflow:hidden;transition:transform .5s var(--out)}
+.disc iframe{position:absolute;left:0;top:0;width:340px;height:460px;border:0;transform-origin:0 0;pointer-events:none;background:transparent}
+.pack .item:hover{z-index:2}
+.pack .item:hover .disc{transform:scale(1.2)}
+/* they bud into place from the middle outward when you reach the circle */
+.js .pack .item{opacity:0;scale:0}
+.js .pack.in .item{animation:bud .8s var(--out) forwards;animation-delay:calc(var(--r) * 1100ms)}
+@keyframes bud{0%{opacity:0;scale:0}55%{opacity:1;scale:1.08}100%{opacity:1;scale:1}}
+.looks-head{max-width:760px;margin:70px auto 0;padding:0 24px}
+.looks-head h2{font-size:clamp(56px,9vw,120px)}
+.bar{display:flex;justify-content:space-between;align-items:center;margin-top:18px;max-width:320px;background:var(--ink);color:#f9f9f9;padding:10px 14px;font-size:14px;text-decoration:none}
+.bar:hover{background:#000}
+.bar span:last-child{opacity:.6}
 
-/* things to try */
-.try{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px}
-.try div{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px}
-.try h3{font-size:16px;color:var(--hot)}
-.try p{font-family:var(--mono);font-size:13.5px;color:var(--dim);margin:0 0 8px}
+/* ---- cards: one per skin -------------------------------------------------------------------------------------- */
+.cards{position:relative;display:grid;grid-template-columns:repeat(4,1fr);margin:160px 0 0;border-top:1px solid var(--line)}
+.card{position:relative;z-index:1;display:flex;flex-direction:column;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:18px;cursor:pointer;background:none;font:inherit;color:inherit;text-align:left}
+.card:nth-child(4n+1){border-left:0}
+.card .face{width:100%;margin:0 auto 6px}
+.card .row{display:flex;justify-content:space-between;align-items:baseline;margin-top:auto;font-size:15px}
+.card .row span:last-child{color:var(--dim)}
+/* frosted glass that glides from card to card, behind the card (so it never blurs him) */
+.hover-border{position:absolute;z-index:0;pointer-events:none;opacity:0;border-radius:22px;
+  background:linear-gradient(135deg,rgba(255,255,255,.75),rgba(255,255,255,.25));
+  -webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
+  border:1px solid rgba(255,255,255,.9);box-shadow:0 18px 40px rgba(42,43,44,.10),0 2px 6px rgba(42,43,44,.06),inset 0 1px 0 #fff,inset 0 -1px 0 rgba(42,43,44,.05);
+  transition:opacity .35s ease,top .45s var(--out),left .45s var(--out),width .45s var(--out),height .45s var(--out)}
 
-footer{border-top:1px solid var(--line);padding:34px 0 50px;color:var(--dim);font-size:15px}
-footer .row{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
-footer a{color:var(--dim)} footer a:hover{color:#fff}
+/* ---- a look, up close (click a card or a face in the circle) ----------------------------------------------------- */
+.detail[hidden]{display:none}
+.detail{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(249,249,249,0);pointer-events:none;transition:background .4s var(--out)}
+.detail.open{background:rgba(249,249,249,.96);pointer-events:auto}
+.detail .inner{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center;width:min(1080px,92vw);opacity:0;transition:opacity .35s ease .25s}
+.detail.open .inner{opacity:1}
+.detail .face{width:100%;transition:transform .6s var(--out)}
+.detail h3{font-size:clamp(48px,7vw,96px);font-weight:700;letter-spacing:-.06em;line-height:.9}
+.detail p{margin-top:16px;font-size:18px;line-height:1.35;color:var(--dim);max-width:380px}
+.detail .acts{display:flex;gap:10px;margin-top:26px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;font:inherit;font-size:15px;text-decoration:none;cursor:pointer;
+  background:var(--ink);color:#f9f9f9;border:1px solid var(--ink)}
+.btn.alt{background:transparent;color:var(--ink)}
+.btn:hover{background:#000;color:#f9f9f9}
+.detail .x{position:absolute;top:18px;right:3%;font:inherit;font-size:15px;background:none;border:0;cursor:pointer;color:var(--ink)}
 
-@media (max-width:820px){
-  section{padding:52px 0}
-  .split,.steps,.grid,.try{grid-template-columns:1fr}
-  .split.flip .shot{order:0}
+/* ---- get him -------------------------------------------------------------------------------------------------- */
+.get{padding:200px 3% 140px}
+.get h2{font-size:clamp(64px,13vw,200px)}
+.get .need{margin-top:20px;max-width:520px;font-size:18px;line-height:1.35;color:var(--dim)}
+.rows{margin-top:50px;border-top:1px solid var(--ink)}
+.os{display:grid;grid-template-columns:1fr auto;gap:8px 24px;align-items:center;padding:22px 0;border-bottom:1px solid var(--ink)}
+.os h3{font-size:clamp(34px,5vw,60px);font-weight:700;letter-spacing:-.05em;line-height:1}
+.os .note{grid-column:1/-1;color:var(--dim);font-size:15px;line-height:1.35;max-width:640px}
+.os .you{display:none;font-size:14px;color:var(--acc);font-weight:600;letter-spacing:0;margin-left:8px}
+.os.mine .you{display:inline}
+.cmd{grid-column:1/-1;display:flex;gap:10px;align-items:center;background:#fff;border:1px solid var(--ink);padding:8px 8px 8px 14px;overflow-x:auto}
+.cmd code{flex:1;white-space:nowrap;font-size:13px}
+
+footer{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:26px 3% 40px;border-top:1px solid var(--line);font-size:14px}
+footer .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:22px;letter-spacing:-.05em}
+footer .brand img{width:34px;height:34px}
+footer .links{display:flex;gap:18px;flex-wrap:wrap}
+footer a{text-decoration:none} footer a:hover{text-decoration:underline}
+
+@media (max-width:860px){
+  .hero{height:auto;min-height:0;padding-top:70px}
+  .hero .face{position:relative;left:auto;top:auto;width:100%;max-width:520px;margin:0 auto}
+  .hero-text{position:relative;right:auto;top:auto;padding:0 6% 40px}
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .detail .inner{grid-template-columns:1fr;gap:0}
+  .detail .face{max-width:360px;margin:0 auto}
   nav .links a:not(.keep){display:none}
 }
+@media (hover:none){ #cursor,#trail{display:none} }
 @media (prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  .orb img,.orb::before{animation:none}
-  .btn{transition:none}
+  .js [data-split] .ch{opacity:1;transform:none;animation:none!important}
+  .js .fade{opacity:1;transition:none}
+  #trail{display:none}
+  .js .pack .item{opacity:1;scale:1;animation:none!important}
+  .disc,.hover-border,.detail .face,.detail,.detail .inner{transition:none}
 }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <nav aria-label="Main">
-    <a class="brand" href="#top"><img src="icon.png" alt="" width="32" height="32">Void</a>
-    <div class="links">
-      <a href="#meet">Meet him</a>
-      <a href="#try">Things to try</a>
-      <a class="keep" href="#install">Install</a>
-      <a class="keep" href="https://discord.gg/Y87KGhqbK5">Discord</a>
-    </div>
-  </nav>
+<div id="cursor" aria-hidden="true"></div>
+<div id="trail" aria-hidden="true"></div>
 
-  <header class="hero" id="top">
-    <div class="orb"><img src="icon.png" alt="Void, a glossy black orb with peach eyes and green pupils" width="170" height="170"></div>
-    <h1>Talk to your <em>code</em>.</h1>
-    <p class="sub">Void is a little orb on your desktop. Say “hey Void” and he gets Claude Code to do the work in your project, then tells you how it went.</p>
-    <div class="cta">
-      <a class="btn main" id="dl" href="#install">Install Void</a>
-      <a class="btn" href="#meet">See what he can do</a>
-    </div>
-    <p class="note" id="dlNote">Free and open source · Windows, macOS and Linux</p>
-  </header>
-</div>
+<nav>
+  <a class="brand" href="#top"><img src="icon.png" alt="" width="26" height="26">void</a>
+  <div class="links"><a href="#about">about</a><a href="#notch">notch</a><a href="#looks">looks</a><a class="keep" href="#get">get him</a><a class="keep" href="https://discord.gg/Y87KGhqbK5">discord</a></div>
+</nav>
 
-<section style="padding-top:0">
-  <div class="wrap split">
-    <div class="shot"><img src="media/talk.webp" alt="Void talking, captions appearing word by word" width="480" height="640" fetchpriority="high"></div>
-    <div>
-      <h2>Just say it.</h2>
-      <p class="dim">No window, no taskbar button. Just him, floating over whatever you're doing.</p>
-      <ul class="ticks">
-        <li><b>“Hey Void, fix the failing tests.”</b> He works in your current folder.</li>
-        <li><b>Watch him work.</b> He holds up a tiny terminal so you see every step.</li>
-        <li><b>Private.</b> Your voice is turned into text on your own computer and never leaves it.</li>
-        <li><b>Tuck him away.</b> Push him into a screen edge and he becomes a notch.</li>
-      </ul>
-    </div>
+<header class="hero" id="top">
+  <div class="face fade" id="heroFace" role="img" aria-label="Void, a glossy black orb with big eyes, watching your cursor. Rub the mouse over him to pet him.">
+    <iframe src="face.html?native=1" title="Void" tabindex="-1" aria-hidden="true"></iframe>
   </div>
-</section>
-
-<section id="how" style="padding-top:20px">
-  <div class="wrap">
-    <h2>Your first two minutes</h2>
-    <div class="steps">
-      <div class="step"><h3>Start Void</h3><p class="dim">He appears in the corner. Drag him anywhere; he remembers the spot.</p></div>
-      <div class="step"><h3>Say “hey Void”</h3><p class="dim">His ring lights up and moves with your voice. Or just click him.</p></div>
-      <div class="step"><h3>Ask for something</h3><p class="dim"><span class="quote">“What does this project do?”</span> He answers out loud and shows what he did.</p></div>
-    </div>
+  <div class="hero-text">
+    <h1 class="big" data-split>say<br>hey<br>void.</h1>
+    <p>a little orb on your desktop who does your coding for you, out loud.</p>
   </div>
-</section>
+</header>
 
-<section id="helpers">
-  <div class="wrap split flip">
-    <div class="shot"><img src="media/work.webp" alt="Void working on a little terminal held under his eyes" width="480" height="640" loading="lazy"></div>
-    <div>
-      <h2>He can bring helpers.</h2>
-      <p class="dim">Ask for a big job and Void sends out subagents. Each one shows up as a little Void that buds off him and orbits while it works. When one finishes it folds back in with a check, and he tells you what it found, even after he's already answered.</p>
-      <p class="dim">Before he runs a command he asks first. Say “yes”, “no” or “always”.</p>
+<main>
+  <section class="info" id="about">
+    <p>void is a little orb that floats on your desktop and gets claude code to do your coding for you, out loud.</p>
+    <p>say “hey void” and ask for something. he turns your voice into text on your own computer, so it never leaves it. then claude code does the work in your project while he holds up a tiny terminal so you can watch. before he runs a command he asks first: say yes, no or always.</p>
+    <p>he has moods. his face follows what he's saying, he gets sleepy when you leave him alone, he purrs when you pet him and he dodges if you click him too much. push him into a screen edge and he melts into a notch.</p>
+    <p>for big jobs he sends out helpers: little voids that bud off him, orbit while they work and fold back in when they're done. then he tells you what they found.</p>
+    <p>he has eleven skins and any colours you like, or he can pick random ones. he's free and open source, and runs on windows, macos and linux. you need claude code.</p>
+  </section>
+
+  <section class="notch" id="notch">
+    <h2 class="big" data-split>he becomes<br>a notch.</h2>
+    <p>push him into the top of your screen and he melts into a notch, just his eyes. drag him back out and he's a ball again.</p>
+    <div class="screen" id="screen" role="img" aria-label="Void melting into a notch at the top of a screen and back out. Click to switch.">
+      <div class="face" id="notchFace"><iframe data-src="face.html?native=1" title="Void" tabindex="-1" aria-hidden="true"></iframe></div>
+      <span class="hint">click to switch</span>
     </div>
-  </div>
-</section>
+  </section>
 
-<section id="meet">
-  <div class="wrap">
-    <h2>Meet him</h2>
-    <p class="dim">He's a little guy with a lot of moods.</p>
-    <div class="grid">
-      <div class="card"><img src="media/listen.webp" alt="Void listening, his ring moving with your voice" width="340" height="320" loading="lazy"><div class="body"><h3>He listens</h3><p>Say “hey Void”, click him, or keep talking right after he answers.</p></div></div>
-      <div class="card"><img src="media/moods.webp" alt="Void cycling through his moods" width="340" height="320" loading="lazy"><div class="body"><h3>He reacts</h3><p>Happy, curious, shy, sleepy, starry-eyed. His face follows what he says, word by word.</p></div></div>
-      <div class="card"><img src="media/notch.webp" alt="Void as a notch at the top of the screen" width="480" height="400" loading="lazy"><div class="body"><h3>He becomes a notch</h3><p>Push him into any screen edge. He glows while you talk and his words drop out of the notch.</p></div></div>
-      <div class="card"><img src="media/skins.webp" alt="Void trying on skins and colours" width="340" height="320" loading="lazy"><div class="body"><h3>Dress him up</h3><p>Cat ears, a halo, a crown, headphones, a bow, and any colours you like.</p></div></div>
-      <div class="card"><img src="media/remember.webp" alt="Void remembering where your blog is" width="340" height="320" loading="lazy"><div class="body"><h3>He remembers</h3><p>Say “remember my blog is in ~/code/blog” and he knows it in every chat.</p></div></div>
-      <div class="card"><img src="media/pet.webp" alt="Void being petted" width="340" height="320" loading="lazy"><div class="body"><h3>Pet him</h3><p>Rub the mouse over him and he purrs. Click him too much and he dodges.</p></div></div>
+  <section id="looks">
+    <div class="pack" id="pack"></div>
+    <div class="looks-head">
+      <h2 class="big" data-split>his looks</h2>
+      <a class="bar" href="#cards"><span>try one on ↓</span><span id="lookCount">12</span></a>
     </div>
-  </div>
-</section>
+    <div class="cards" id="cards"><div class="hover-border" id="hb"></div></div>
+  </section>
 
-<section id="try" style="padding-top:20px">
-  <div class="wrap">
-    <h2>Things to try</h2>
-    <div class="try">
-      <div><h3>Coding</h3><p>“Hey Void, run the tests”</p><p>“Fix the failing test”</p><p>“Make the button blue”</p></div>
-      <div><h3>Your screen</h3><p>“What's this error on my screen?”</p><p>“Explain what I copied”</p><p>“Watch my screen”</p></div>
-      <div><h3>Instant</h3><p>“Timer 10 minutes”</p><p>“Volume up”</p><p>“Remind me at 5 to call mom”</p></div>
+  <section class="get" id="get">
+    <h2 class="big" data-split>get him.</h2>
+    <p class="need">free and open source. you need <a href="https://docs.anthropic.com/en/docs/claude-code">claude code</a> first: install it, then run <code>claude</code> once in a terminal to sign in.</p>
+    <div class="rows">
+      <div class="os" id="os-win">
+        <h3>windows<span class="you">your computer</span></h3>
+        <a class="btn" href="https://github.com/PLAYER99-void/void/releases/latest/download/VoidSetup.exe">download</a>
+        <p class="note">run <code>VoidSetup.exe</code> and wait a few minutes while it sets up his voice and hearing, then find void in your start menu. no admin needed. if windows says “protected your pc”, click more info, then run anyway.</p>
+      </div>
+      <div class="os" id="os-mac">
+        <h3>macos<span class="you">your computer</span></h3>
+        <a class="btn" href="https://github.com/PLAYER99-void/void/releases/latest/download/Void.dmg">download</a>
+        <p class="note">open <code>Void.dmg</code> and drag void into applications (apple silicon, m1 or newer). it isn't notarized by apple, so the first launch is blocked: open system settings, privacy &amp; security, and click open anyway next to void.</p>
+      </div>
+      <div class="os" id="os-lin">
+        <h3>linux<span class="you">your computer</span></h3>
+        <span style="color:var(--dim);font-size:15px">ubuntu · debian · fedora · arch</span>
+        <div class="cmd"><code id="linCmd">curl -fsSL https://raw.githubusercontent.com/PLAYER99-void/void/main/get.sh | bash</code><button class="btn" type="button" id="copy">copy</button></div>
+        <p class="note">paste it into a terminal. it sets up void, his voice and hearing, and starts him. or grab a .deb, .rpm or arch package from the <a href="https://github.com/PLAYER99-void/void/releases/latest">latest release</a>.</p>
+      </div>
     </div>
-  </div>
-</section>
-
-<section id="install">
-  <div class="wrap">
-    <h2>Install</h2>
-    <p class="dim">Free, MIT licensed, a few minutes to set up.</p>
-    <div class="need"><b>You need <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> first.</b> Install it, then run <code>claude</code> once in a terminal to sign in. Void is the voice and face; Claude Code does the work.</div>
-
-    <div class="tabs" role="tablist" aria-label="Your system">
-      <button class="tab" role="tab" id="t-win" aria-controls="p-win" aria-selected="false">Windows</button>
-      <button class="tab" role="tab" id="t-mac" aria-controls="p-mac" aria-selected="false">macOS</button>
-      <button class="tab" role="tab" id="t-lin" aria-controls="p-lin" aria-selected="false">Linux</button>
-    </div>
-
-    <div class="pane" role="tabpanel" id="p-win" aria-labelledby="t-win" hidden>
-      <a class="btn main" href="https://github.com/PLAYER99-void/void/releases/latest/download/VoidSetup.exe">Download VoidSetup.exe</a>
-      <ol>
-        <li>Run it and wait a few minutes while it sets up his voice and hearing.</li>
-        <li>Find <b>Void</b> in your Start menu.</li>
-      </ol>
-      <p class="small" style="margin-top:14px">No admin needed. Uninstall from Settings → Apps. If it says “Windows protected your PC”, click <b>More info → Run anyway</b>.</p>
-    </div>
-
-    <div class="pane" role="tabpanel" id="p-mac" aria-labelledby="t-mac" hidden>
-      <a class="btn main" href="https://github.com/PLAYER99-void/void/releases/latest/download/Void.dmg">Download Void.dmg</a>
-      <ol>
-        <li>Open the download and drag <b>Void</b> into Applications.</li>
-        <li>Open it. macOS asks to let him use the microphone and record the screen: say yes.</li>
-      </ol>
-      <p class="small" style="margin-top:14px">For Apple Silicon Macs (M1 or newer). The app isn't notarized by Apple, so the first launch is blocked: open <b>System Settings → Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b> next to Void.</p>
-    </div>
-
-    <div class="pane" role="tabpanel" id="p-lin" aria-labelledby="t-lin" hidden>
-      <p style="margin:0">Paste this into a terminal:</p>
-      <div class="code"><code id="linCmd">curl -fsSL https://raw.githubusercontent.com/PLAYER99-void/void/main/get.sh | bash</code><button class="copy" type="button" data-copy="linCmd">Copy</button></div>
-      <p class="small" style="margin:0">Works on Ubuntu, Debian, Fedora and Arch. It sets up Void, his voice and hearing, and starts him. Then run <code>void</code> any time. Prefer a package? Grab a .deb, .rpm or Arch package from the <a href="https://github.com/PLAYER99-void/void/releases/latest">latest release</a>.</p>
-    </div>
-  </div>
-</section>
+  </section>
+</main>
 
 <footer>
-  <div class="wrap row">
-    <div>Void is free and open source, MIT licensed. <a href="https://github.com/PLAYER99-void/void">Source code</a></div>
-    <div><a href="https://github.com/PLAYER99-void/void/blob/main/docs/GUIDE.md">Full guide</a> · <a href="https://discord.gg/Y87KGhqbK5">Help on Discord</a> · <a href="https://github.com/PLAYER99-void/void/issues">Report a bug</a></div>
+  <a class="brand" href="#top" style="text-decoration:none"><img src="icon.png" alt="" width="34" height="34">void</a>
+  <div class="links">
+    <a href="https://discord.gg/Y87KGhqbK5">discord</a>
+    <a href="https://github.com/PLAYER99-void/void/blob/main/docs/GUIDE.md">guide</a>
+    <a href="https://github.com/PLAYER99-void/void">source</a>
+    <a href="https://github.com/PLAYER99-void/void/issues">report a bug</a>
   </div>
 </footer>
 
+<div class="detail" id="detail" role="dialog" aria-modal="true" aria-labelledby="dTitle" hidden>
+  <button class="x" type="button" id="dClose">close ✕</button>
+  <div class="inner">
+    <div class="face" id="dFace"><iframe src="face.html?native=1" title="Void" tabindex="-1" aria-hidden="true"></iframe></div>
+    <div>
+      <h3 id="dTitle"></h3>
+      <p id="dText"></p>
+      <div class="acts"><button class="btn alt" type="button" id="dRandom">random colours</button><a class="btn" href="#get" id="dGet">get him</a></div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
-  var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || "";
-  var os = /win/i.test(ua) ? "win" : /mac|iphone|ipad/i.test(ua) ? "mac" : "lin";
-  var names = {win: "Windows", mac: "macOS", lin: "Linux"};
-  var tabs = ["win", "mac", "lin"];
+  var calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  function show(id, focus){
-    tabs.forEach(function(t){
-      var on = t === id, tab = document.getElementById("t-" + t);
-      tab.setAttribute("aria-selected", on);
-      tab.tabIndex = on ? 0 : -1;
-      document.getElementById("p-" + t).hidden = !on;
-      if (on && focus) tab.focus();
+  // ---- his real looks: the app's skins (app/static/index.html, SKINS / drawSkin), captured from the app -------------------
+  var LOOKS = [
+    ["none", "plain", "just him. glossy, black, peach eyes, green pupils."],
+    ["cat", "cat ears", "ears that wiggle whenever his mood changes."],
+    ["bunny", "bunny", "long ears that wiggle whenever his mood changes."],
+    ["bear", "bear", "round ears that wiggle whenever his mood changes."],
+    ["antenna", "antenna", "it wobbles when he moves."],
+    ["devil", "devil", "little horns, in his pupil colour."],
+    ["halo", "halo", "a ring over his head, in his eye colour."],
+    ["crown", "crown", "for when he's done something great."],
+    ["sprout", "sprout", "a little plant that wobbles when he moves."],
+    ["party", "party hat", "for when the tests finally pass."],
+    ["headphones", "headphones", "he listens, after all."],
+    ["bow", "bow", "a bow on one side, in his pupil colour."]
+  ];
+  document.getElementById("lookCount").textContent = LOOKS.length;
+
+  // ---- headings: split into letters that rise in when they come into view -------------------------------------------------
+  function split(el){
+    var n = 0;
+    el.setAttribute("aria-label", el.innerHTML.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+    (function walk(node){
+      Array.prototype.slice.call(node.childNodes).forEach(function(c){
+        if (c.nodeType === 3){
+          var frag = document.createDocumentFragment();
+          c.nodeValue.split(/(\s+)/).forEach(function(part){
+            if (!part) return;
+            if (/^\s+$/.test(part)){ frag.appendChild(document.createTextNode(" ")); return; }
+            var w = document.createElement("span"); w.className = "w"; w.setAttribute("aria-hidden", "true");
+            Array.prototype.forEach.call(part, function(ch){
+              var s = document.createElement("span"); s.className = "ch"; s.textContent = ch; s.style.setProperty("--i", n++); w.appendChild(s);
+            });
+            frag.appendChild(w);
+          });
+          node.replaceChild(frag, c);
+        } else if (c.nodeType === 1 && c.tagName !== "BR") walk(c);
+      });
+    })(el);
+  }
+  var heads = Array.prototype.slice.call(document.querySelectorAll("[data-split]"));
+  if (!calm) heads.forEach(split);
+  function reveal(){
+    heads = heads.filter(function(el){
+      var r = el.getBoundingClientRect();
+      if (r.top < innerHeight * .9 && r.bottom > 0){ el.classList.add("in"); return false; }
+      return true;
     });
   }
-  tabs.forEach(function(t, i){
-    var tab = document.getElementById("t-" + t);
-    tab.addEventListener("click", function(){ show(t); });
-    tab.addEventListener("keydown", function(e){
-      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-      if (d) { e.preventDefault(); show(tabs[(i + d + tabs.length) % tabs.length], true); }
-    });
-  });
-  show(os);
 
-  var dl = document.getElementById("dl");
-  dl.textContent = "Install for " + names[os];
-  document.getElementById("dlNote").textContent = "Free and open source · also for " +
-    tabs.filter(function(t){ return t !== os; }).map(function(t){ return names[t]; }).join(" and ");
-  dl.addEventListener("click", function(){ show(os); });
+  addEventListener("scroll", reveal, {passive: true});
+  addEventListener("resize", reveal);
 
-  document.querySelectorAll(".copy").forEach(function(b){
-    b.addEventListener("click", function(){
-      var text = document.getElementById(b.dataset.copy).textContent;
-      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function(){
-        b.textContent = "Copied"; setTimeout(function(){ b.textContent = "Copy"; }, 1800);
-      }, function(){
-        var r = document.createRange(); r.selectNodeContents(document.getElementById(b.dataset.copy));
-        var s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Press Ctrl+C";
-      });
+  // ---- his live face: the app's own page (face.html) in a frame. It follows your cursor, and you can pet him -----------------
+  function Face(box, onload){
+    var frame = box.querySelector("iframe"), self = {w: null, k: 1, box: box};
+    self.fit = function(){ self.k = box.clientWidth / 340; frame.style.transform = "scale(" + self.k + ")"; };
+    self.fit(); addEventListener("resize", self.fit);
+    frame.addEventListener("load", function(){ self.fit(); self.w = frame.contentWindow;
+      try { self.w.document.head.insertAdjacentHTML("beforeend", "<style>html,#paint{background:transparent!important}</style>"); } catch (e) {}   // his page leaves a faint film: clear it   // (sized again: a card is built before it is on the page)
+      box.classList.add("on"); if (onload) onload(self); });
+    self.over = function(x, y){ return !!(self.w && body(at(x, y))); };   // is the point on his body?
+    function at(x, y){ var b = frame.getBoundingClientRect(); return [(x - b.left) / self.k, (y - b.top) / self.k]; }
+    function body(p){ try { var el = self.w.document.elementFromPoint(p[0], p[1]); return el && el.closest("#body"); } catch (e) { return null; } }
+    // the mouse, as if it moved over his own window; over his body it rubs him (the app's petting: he purrs)
+    self.move = function(x, y, mvx){
+      if (!self.w) return;
+      var p = at(x, y);
+      try { (body(p) || self.w).dispatchEvent(new self.w.MouseEvent("mousemove", {bubbles: true, clientX: p[0], clientY: p[1], movementX: mvx || 0})); } catch (e) {}
+    };
+    // clicks: what the app does minus listening (there's no server here): 4 quick clicks and he dodges, 6 and he's annoyed
+    var clicks = [];
+    (getComputedStyle(box).pointerEvents === "none" ? document : box).addEventListener("click", function(e){
+      if (!self.w || !body(at(e.clientX, e.clientY))) return;
+      if (self.dragged && performance.now() - self.dragged < 300) return;
+      var n = performance.now(); clicks = clicks.filter(function(c){ return n - c < 1400; }); clicks.push(n);
+      try {
+        if (clicks.length >= 6){ clicks = []; self.w.dodge(); self.w.poke("annoyed", 1600); }
+        else if (clicks.length === 4){ self.w.dodge(); self.w.poke("surprised", 800); }
+        else self.w.eval("G.jelly.kick(.6)");
+      } catch (err) {}
     });
+    self.look = function(L){ if (self.w) try { self.w.applyLook(L); } catch (e) {} };
+    return self;
+  }
+  var hero = Face(document.getElementById("heroFace"));          // plain Void: the app's default look
+
+  // ---- drag him anywhere: press on his body and move. He follows your hand (a little wobble as he's picked up and let go) --
+  var heroBox = document.getElementById("heroFace"), drag = null, ox = 0, oy = 0;
+  document.addEventListener("pointerdown", function(e){
+    if (e.button !== 0 || !hero.over(e.clientX, e.clientY)) return;
+    drag = {x: e.clientX, y: e.clientY, ox: ox, oy: oy, moved: false};
+    e.preventDefault();
   });
+  addEventListener("pointermove", function(e){
+    if (!drag) return;
+    var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+    if (!drag.moved){ drag.moved = true; document.documentElement.classList.add("dragging"); try { hero.w.eval("G.jelly.kick(.5)"); } catch (err) {} }
+    ox = drag.ox + dx; oy = drag.oy + dy;
+    heroBox.style.translate = ox + "px " + oy + "px";
+  });
+  addEventListener("pointerup", function(){
+    if (!drag) return;
+    if (drag.moved){ document.documentElement.classList.remove("dragging"); try { hero.w.eval("G.jelly.kick(-.4)"); } catch (err) {} hero.dragged = performance.now(); }
+    drag = null;
+  });
+  addEventListener("touchmove", function(e){ if (drag) e.preventDefault(); }, {passive: false});   // (on a phone, dragging him doesn't scroll)
+  var near = Face(document.getElementById("dFace"));
+
+  // ---- the cursor: a soft disc, and little glyphs left behind as it moves ---------------------------------------------------
+  var cur = document.getElementById("cursor"), trail = document.getElementById("trail"), lastSpawn = 0, mx = -99, my = -99;
+  var GLYPHS = "⚇⚇⚇⚇⚇⚇⚇⚇░▒▓│┤╡╢║╗╝┐└┴┬├─┼═╬■□▪▫○●◎◉⊙✦✧⋆★☆◇◆△▽∞≈÷±°∙·".split("");
+  function glyph(){
+    var g = document.createElement("span"), r = function(a, b){ return a + Math.random() * (b - a); };
+    var x = mx + r(-6, 6), y = my + r(-6, 6);
+    g.textContent = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+    g.style.left = x + "px"; g.style.top = y + "px";
+    g.style.transform = "translate(-50%,-50%) rotate(" + r(-180, 180).toFixed(0) + "deg) scale(" + r(.4, 1.25).toFixed(2) + ")";
+    trail.appendChild(g);
+    (function show(){ if (Math.hypot(mx - x, my - y) > 14) g.classList.add("on"); else if (g.isConnected) requestAnimationFrame(show); })();   // shows once you've moved off it
+    setTimeout(function(){ g.remove(); }, r(250, 650));
+  }
+  addEventListener("pointermove", function(e){
+    mx = e.clientX; my = e.clientY;
+    hero.move(mx, my, e.movementX);
+    if (detailOpen) near.move(mx, my, e.movementX);
+    if (e.pointerType !== "mouse") return;
+    cur.classList.add("on"); cur.style.transform = "translate(" + mx + "px," + my + "px)";
+    var t = e.target.closest && e.target.closest("a,button,.card,.pack button");
+    cur.classList.toggle("big", !!t);
+    if (!calm && performance.now() - lastSpawn > 10){ lastSpawn = performance.now(); glyph(); }
+  }, {passive: true});
+  document.addEventListener("mouseleave", function(){ cur.classList.remove("on"); });
+
+  // ---- the circle of his eyes: his real face, live, in his moods and colours; every one follows your mouse ---------------------
+  var CX = 170, CY = 165.2, BALL = 168.2 * 1.06;   // his ball inside his page: centre and size (each window shows a bit more)
+  var EYES = [["none","d","slit"],["love","d","slit"],["excited","d","slit"],["surprised","d","slit"],["listening","d","slit"],["thinking","d","slit"],
+    ["happy","d","slit"],["curious","d","slit"],["none","d","circle"],["none","d","dot"],["t_serious","d","slit"],["none","r","slit"],["love","r","slit"],
+    ["excited","r","slit"],["surprised","r","slit"],["listening","r","circle"],["happy","r","slit"],["curious","r","circle"],["t_unsure","r","slit"],["none","r","dot"]];
+  var HIDE = "<style>html,#paint{background:transparent!important}#orbBack,#orbFront,#haloW,#shadow,#miniSh,#accBack,#accFront,#raysW,#fx,#fxBack{display:none!important}</style>";
+  function rng(a){ return function(){ a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  var rnd = rng(5), pack = document.getElementById("pack"), placed = [], minis = [], en = 0;
+  var eorder = EYES.slice().sort(function(){ return rnd() - .5; });
+  function mini(disc, L){
+    var frame = disc.firstChild, f = {w: null, k: 1, gaze: null};
+    f.fit = function(){ var D = disc.clientWidth; f.k = D / BALL;
+      frame.style.transform = "translate(" + (D / 2 - CX * f.k) + "px," + (D / 2 - CY * f.k) + "px) scale(" + f.k + ")"; };
+    f.fit();
+    frame.addEventListener("load", function(){
+      var w = frame.contentWindow;
+      try {
+        w.document.head.insertAdjacentHTML("beforeend", HIDE);
+        w.eval("info.pupil_style=" + JSON.stringify(L[2]));
+        if (L[1] === "r") w.applyLook(w.randomLook({link: true}));
+        if (L[0] !== "none") w.poke(L[0], 1e9);
+        w.gazeHook = function(){ return f.gaze; };   // some moods steer his eyes themselves: the mouse wins, the mood sets the shape
+      } catch (e) {}
+      f.w = w;
+    });
+    f.move = function(x, y){
+      if (!f.w) return;
+      var b = frame.getBoundingClientRect(), px = (x - b.left) / f.k, py = (y - b.top) / f.k;
+      f.gaze = [Math.max(-7, Math.min(7, (px - CX) / 340 * 16)), Math.max(-6, Math.min(6, (py - CY) / 460 * 12))];
+      try { f.w.dispatchEvent(new f.w.MouseEvent("mousemove", {clientX: px, clientY: py})); } catch (e) {}
+    };
+    return f;
+  }
+  [0.25, 0.2, 0.17, 0.15, 0.13, 0.115, 0.1].forEach(function(d, si){
+    var count = si === 0 ? 1 : si < 3 ? 2 : si < 5 ? 3 : 4, tries = 0;
+    while (count > 0 && tries++ < 4000){
+      var rad = d / 2, ang = rnd() * 6.283, dist = Math.sqrt(rnd()) * (0.5 - rad - 0.015);
+      var x = 0.5 + Math.cos(ang) * dist, y = 0.5 + Math.sin(ang) * dist, ok = true;
+      for (var j = 0; j < placed.length; j++){ var q = placed[j]; if (Math.hypot(q.x - x, q.y - y) < q.r + rad + 0.01){ ok = false; break; } }
+      if (!ok) continue;
+      placed.push({x: x, y: y, r: rad}); count--;
+      var item = document.createElement("div"); item.className = "item"; item.setAttribute("aria-hidden", "true");
+      item.style.cssText = "left:" + x * 100 + "%;top:" + y * 100 + "%;width:" + d * 100 + "%;--r:" + (Math.hypot(x - .5, y - .5) * 2).toFixed(2);
+      item.innerHTML = '<div class="disc"><iframe data-src="face.html?native=1" title="Void" tabindex="-1"></iframe></div>';
+      pack.appendChild(item);
+      minis.push(mini(item.firstChild, eorder[en++ % eorder.length]));
+    }
+  });
+  heads.push(pack);   // (reveal() gives it .in when it comes into view, like the headings)
+  // his faces load once you get near the circle
+  var packLoaded = false;
+  function loadPack(){
+    if (packLoaded || pack.getBoundingClientRect().top > innerHeight * 2) return;
+    packLoaded = true; pack.querySelectorAll("iframe").forEach(function(fr){ fr.src = fr.dataset.src; });
+  }
+  addEventListener("scroll", loadPack, {passive: true}); loadPack();
+  addEventListener("resize", function(){ minis.forEach(function(f){ f.fit(); }); });
+  addEventListener("pointermove", function(e){ if (packLoaded) minis.forEach(function(f){ f.move(e.clientX, e.clientY); }); }, {passive: true});
+
+
+  // ---- cards: one per skin. Moving over one makes him look around (frames captured from the app), like the reference's spin ---
+  var cards = document.getElementById("cards"), hb = document.getElementById("hb"), cardFaces = [];
+  var NOSPARKS = "<style>#orbBack,#orbFront,#raysW{display:none!important}</style>";   // no sparks around the small ones
+  LOOKS.forEach(function(L){
+    // (a div acting as a button: a real <button> won't show the frame with his face inside it)
+    var c = document.createElement("div"); c.className = "card"; c.tabIndex = 0; c.setAttribute("role", "button"); c.setAttribute("aria-label", "Try on: " + L[1]);
+    c.addEventListener("keydown", function(e){ if (e.key === "Enter" || e.key === " "){ e.preventDefault(); c.click(); } });
+    c.innerHTML = '<div class="face"><iframe data-src="face.html?native=1" title="Void" tabindex="-1" aria-hidden="true"></iframe></div><div class="row"><span>' + L[1] + '</span><span>free</span></div>';
+    cardFaces.push(Face(c.firstChild, function(f){
+      try { f.w.document.head.insertAdjacentHTML("beforeend", NOSPARKS); } catch (e) {}
+      f.look({skin: L[0]});
+    }));
+    c.addEventListener("pointerenter", function(){
+      var m = 8;
+      hb.style.left = c.offsetLeft + m + "px"; hb.style.top = c.offsetTop + m + "px";
+      hb.style.width = c.offsetWidth - 2 * m + "px"; hb.style.height = c.offsetHeight - 2 * m + "px"; hb.style.opacity = 1;
+    });
+    c.addEventListener("click", function(){ open(L[0], c.firstChild); });
+    cards.appendChild(c);
+  });
+  cards.addEventListener("pointerleave", function(){ hb.style.opacity = 0; });
+  var cardsLoaded = false;
+  function loadCards(){
+    if (cardsLoaded || cards.getBoundingClientRect().top > innerHeight * 2) return;
+    cardsLoaded = true; cards.querySelectorAll("iframe").forEach(function(fr){ fr.src = fr.dataset.src; });
+  }
+  addEventListener("scroll", loadCards, {passive: true}); loadCards();
+  addEventListener("pointermove", function(e){ if (cardsLoaded) cardFaces.forEach(function(f){ f.move(e.clientX, e.clientY); }); }, {passive: true});
+
+  // ---- up close: his picture flies to the middle and becomes the live Void, wearing that look ----------------------------------
+  var detail = document.getElementById("detail"), detailOpen = false, lastFocus = null, curSkin = "none";
+  function info(skin){ for (var i = 0; i < LOOKS.length; i++) if (LOOKS[i][0] === skin) return LOOKS[i]; return null; }
+  function open(skin, sprite){
+    var L = info(skin);
+    curSkin = skin || LOOKS[Math.floor(Math.random() * LOOKS.length)][0];
+    document.getElementById("dTitle").textContent = L ? L[1] : "random colours";
+    document.getElementById("dText").textContent = L ? L[2] : "the app can pick random colours for him: body, eyes and pupils. try it again for another.";
+    lastFocus = document.activeElement;
+    detail.hidden = false; near.fit();
+    var look = {skin: curSkin};
+    if (!L) try { Object.assign(look, near.w.randomLook({link: true})); } catch (e) {}
+    near.look(look);
+    var dFace = document.getElementById("dFace");
+    if (sprite && !calm){   // start where the card's face is, then glide to the middle
+      var a = sprite.getBoundingClientRect(), z = dFace.getBoundingClientRect();
+      dFace.style.transition = "none";
+      dFace.style.transform = "translate(" + (a.left - z.left) + "px," + (a.top - z.top) + "px) scale(" + (a.width / z.width) + ")";
+      dFace.style.transformOrigin = "0 0";
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){ dFace.style.transition = ""; dFace.style.transform = ""; }); });
+    }
+    requestAnimationFrame(function(){ detail.classList.add("open"); });
+    detailOpen = true;
+    document.getElementById("dClose").focus();
+  }
+  function close(){
+    detail.classList.remove("open"); detailOpen = false;
+    setTimeout(function(){ if (!detailOpen) detail.hidden = true; }, 400);
+    if (lastFocus) lastFocus.focus();
+  }
+  document.getElementById("dClose").addEventListener("click", close);
+  document.getElementById("dGet").addEventListener("click", close);
+  detail.addEventListener("click", function(e){ if (e.target === detail) close(); });
+  addEventListener("keydown", function(e){ if (e.key === "Escape" && detailOpen) close(); });
+  document.getElementById("dRandom").addEventListener("click", function(){
+    try { near.look(Object.assign({skin: curSkin}, near.w.randomLook({link: true}))); } catch (e) {}
+  });
+
+  // ---- the notch: the app's own voidDock() melts him into the top edge and back out, every few seconds, or when you click ----
+  var screen = document.getElementById("screen"), notchFace = null, docked = false, notchT = 0;
+  function dock(on){ docked = on; try { notchFace.w.voidDock(on ? "top" : ""); } catch (e) {} }
+  function notchLoop(){ clearTimeout(notchT); notchT = setTimeout(function(){ dock(!docked); notchLoop(); }, docked ? 5200 : 3200); }
+  function loadNotch(){
+    if (notchFace || screen.getBoundingClientRect().top > innerHeight * 1.5) return;
+    var fr = screen.querySelector("iframe"); fr.src = fr.dataset.src;
+    notchFace = Face(document.getElementById("notchFace"), function(){ setTimeout(function(){ dock(true); notchLoop(); }, 1200); });
+  }
+  addEventListener("scroll", loadNotch, {passive: true}); loadNotch();
+  screen.addEventListener("click", function(){ if (notchFace && notchFace.w){ dock(!docked); notchLoop(); } });
+  addEventListener("pointermove", function(e){ if (notchFace) notchFace.move(e.clientX, e.clientY, e.movementX); }, {passive: true});
+
+  // ---- only the faces you can see run: an off-screen frame is set to display:none, which stops its animation without
+  // unloading it, and it carries on where it was when you scroll back
+  var running = new IntersectionObserver(function(es){
+    es.forEach(function(e){ var fr = e.target.querySelector("iframe"); if (fr) fr.style.display = e.isIntersecting ? "" : "none"; });
+  }, {rootMargin: "150px 0px"});
+  document.querySelectorAll(".face,.disc").forEach(function(box){ running.observe(box); });
+
+  // ---- which computer is this? ---------------------------------------------------------------------------------------------
+  var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || "";
+  var os = /win/i.test(ua) ? "win" : /mac|iphone|ipad/i.test(ua) ? "mac" : "lin";
+  document.getElementById("os-" + os).classList.add("mine");
+
+  var cb = document.getElementById("copy"), code = document.getElementById("linCmd");
+  cb.addEventListener("click", function(){
+    var done = function(){ cb.textContent = "copied"; setTimeout(function(){ cb.textContent = "copy"; }, 1800); };
+    if (navigator.clipboard) navigator.clipboard.writeText(code.textContent).then(done, select); else select();
+    function select(){ var rg = document.createRange(); rg.selectNodeContents(code); var s = getSelection(); s.removeAllRanges(); s.addRange(rg); cb.textContent = "press ctrl+c"; }
+  });
+
+  reveal();
 })();
 </script>
 </body>
