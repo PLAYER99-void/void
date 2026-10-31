@@ -155,21 +155,9 @@ It gets the system packages for you (pacman, apt or dnf) and updates itself with
 
 <img src="https://img.shields.io/badge/macOS-Apple_Silicon-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS on Apple Silicon">
 
-The Mac version was contributed by [ohshitgorillas](https://github.com/ohshitgorillas/void).
+Download **Void.dmg** from the [latest release](https://github.com/PLAYER99-void/void/releases/latest), open it and drag **Void** into Applications. It's for Apple Silicon Macs (M1 or newer). The Mac version was contributed by [ohshitgorillas](https://github.com/ohshitgorillas/void).
 
-**The app.** Download **Void.dmg** from the [latest release](https://github.com/PLAYER99-void/void/releases/latest), open it and drag **Void** into Applications. It's for Apple Silicon Macs (M1 or newer).
-
-<sub>The app isn't notarized by Apple, so the first launch is blocked. Open <b>System Settings → Privacy & Security</b>, scroll down and click <b>Open Anyway</b> next to Void. macOS then asks to let him use the microphone: say yes.</sub>
-
-**Or from source.**
-
-```bash
-git clone https://github.com/PLAYER99-void/void.git
-cd void && ./install.sh
-void
-```
-
-No system packages needed: his window, mic and speakers all come from PyPI. When macOS asks to let your terminal use the microphone or record the screen, say yes. `git pull` updates him.
+<sub>The app isn't notarized by Apple, so the first launch is blocked. Open <b>System Settings → Privacy & Security</b>, scroll down and click <b>Open Anyway</b> next to Void. macOS then asks to let him use the microphone and to record the screen: say yes.</sub>
 
 ## Your first two minutes
 
