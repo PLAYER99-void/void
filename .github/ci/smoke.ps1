@@ -101,7 +101,7 @@ $st3 = Invoke-RestMethod http://127.0.0.1:47777/api/state -Headers @{"X-Void-Tok
 Check "junk bar settings are ignored" ($st3.presence -eq "bar" -and $st3.bar_edge -eq "bottom") ""
 Invoke-RestMethod -Method Post http://127.0.0.1:47777/api/settings -Headers @{"X-Void-Token" = $tok} -ContentType "application/json" -Body '{"presence":"orb"}' | Out-Null
 
-# the push-to-talk hotkey: press and hold Ctrl+Alt+Space (the default) like a person would, then let go
+# the push-to-talk hotkey: press and hold Win+Space (the default) like a person would, then let go
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public class Keys {
@@ -111,9 +111,9 @@ public class Keys {
   public static uint Key(ushort vk, bool up) { var i = new INPUT[1]; i[0].type = 1; i[0].ki.vk = vk; i[0].ki.flags = up ? 2u : 0u; return SendInput(1, i, Marshal.SizeOf(typeof(INPUT))); }
 }
 "@
-[Keys]::Key(0x11, $false) | Out-Null; [Keys]::Key(0x12, $false) | Out-Null; [Keys]::Key(0x20, $false) | Out-Null
+[Keys]::Key(0x5B, $false) | Out-Null; [Keys]::Key(0x20, $false) | Out-Null
 Start-Sleep 1
-[Keys]::Key(0x20, $true) | Out-Null; [Keys]::Key(0x12, $true) | Out-Null; [Keys]::Key(0x11, $true) | Out-Null
+[Keys]::Key(0x20, $true) | Out-Null; [Keys]::Key(0x5B, $true) | Out-Null
 Start-Sleep 2
 # (the whole log: the window and the server write it through separate handles, so new lines can land anywhere)
 $new = (Get-Content "$ROOT\server.log") -join "`n"
