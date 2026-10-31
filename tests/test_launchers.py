@@ -155,6 +155,7 @@ class Launchers(unittest.TestCase):
     def test_mac_bundle_never_attaches_to_another_void(self):
         self.check_never_attaches(self.mac_bundle())
 
+    @unittest.skipUnless(sys.platform == "darwin", "drives the Mac window path of bin/void")
     def test_bin_void_starts_its_own_server(self):
         self.check_own_server(self.home_install())
 
@@ -165,6 +166,7 @@ class Launchers(unittest.TestCase):
         self.extra = {"FAKE_OLD": "1"}
         self.check_own_server(self.mac_bundle())
 
+    @unittest.skipUnless(sys.platform == "darwin", "drives the Mac window path of bin/void")
     def test_bin_void_takes_its_older_server_from_before_an_update(self):
         self.extra = {"FAKE_OLD": "1"}
         self.check_own_server(self.home_install())

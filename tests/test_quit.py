@@ -135,6 +135,7 @@ class Base(unittest.TestCase):
         return self.pidfiles(home)
 
 
+@unittest.skipUnless(sys.platform == "darwin", "runs the Void.app launcher")
 class LauncherQuit(Base):
     def bundle(self):
         c = self.tmp / "Void.app" / "Contents"
