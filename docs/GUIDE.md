@@ -40,14 +40,15 @@ New here? Start with the <a href="../README.md">README</a>: it gets you running 
 "hey Void" until you bring him back with the Start menu / app launcher, your hotkey, or `void`. `void stop` quits him
 completely.
 
-**Push-to-talk hotkey.** Hold **Ctrl+Alt+Space** anywhere, even while another app is in front, to talk; let go and
+**Push-to-talk hotkey.** Hold **Win+Space** (the Windows key, or Super on Linux) anywhere, even while another app is in front, to talk; let go and
 he answers. Change it in Settings → Voice. On Windows Void watches for the combo himself. On Linux, bind the press
 and release in your desktop:
 
 | desktop | in your config |
 |---|---|
-| Hyprland | `bind = CTRL ALT, SPACE, exec, void ptt-down` and `bindr = CTRL ALT, SPACE, exec, void ptt-up` |
-| sway / i3 | `bindsym Ctrl+Mod1+space exec void ptt-down` and `bindsym --release Ctrl+Mod1+space exec void ptt-up` |
+| Hyprland | `bind = SUPER, SPACE, exec, void ptt-down` and `bindr = SUPER, SPACE, exec, void ptt-up` |
+| Hyprland 0.56+ (Lua) | `hl.bind("SUPER + SPACE", hl.dsp.exec_cmd("void ptt-down"))` and the same with `void ptt-up` and `{ release = true }` |
+| sway / i3 | `bindsym Mod4+space exec void ptt-down` and `bindsym --release Mod4+space exec void ptt-up` |
 | GNOME / KDE / others | shortcuts only fire on press there: bind `void listen` instead (he stops when you stop talking) |
 
 After he answers, keep talking for a few seconds and he still hears you, no "hey Void" needed (`follow_up` in the
@@ -254,7 +255,7 @@ Windows.
 | `whisper_model` | `auto` | `small.en` on an NVIDIA GPU, `base.en` on CPU; or `tiny.en` / `medium.en` |
 | `stt_hint` | coding words | words he should expect (add your project names) |
 | `mic_device` | `""` | input to record from (Settings → Voice lists them) |
-| `ptt_hotkey` | `Ctrl+Alt+Space` | hold to talk from anywhere (Windows; on Linux bind `void ptt-down` / `void ptt-up`); `""` = off |
+| `ptt_hotkey` | `Win+Space` | hold to talk from anywhere (Windows; on Linux bind `void ptt-down` / `void ptt-up`); `""` = off |
 | `update_check` | `true` | ask GitHub twice a day whether a newer Void is out (nothing about you is sent); Settings → More shows it with an **Update now** button |
 | `mic_auto` | `true` | keep your voice at a good level: after you speak he turns the Windows mic level up if you came in quiet, down if you clipped, and boosts it himself past 100% (Windows) |
 | `extra_args` | `[]` | extra CLI flags for `claude` |

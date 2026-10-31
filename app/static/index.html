@@ -2678,7 +2678,7 @@ function renderSettings(){
 // push-to-talk hotkey: Windows watches the combo itself; on Linux your compositor binds `void ptt-down` / `void ptt-up`
 let pttCapture=false;
 function pttLinux(k){                               // "Ctrl+Alt+Space" → Hyprland's "CTRL ALT, SPACE"
-  const p=(k||'Ctrl+Alt+Space').split('+'), key=p.pop(); return [p.map(m=>m.toUpperCase().replace('WIN','SUPER')).join(' '), key.toUpperCase()];
+  const p=(k||'Win+Space').split('+'), key=p.pop(); return [p.map(m=>m.toUpperCase().replace('WIN','SUPER')).join(' '), key.toUpperCase()];
 }
 function renderPtt(){
   const k=info.ptt_hotkey||'', b=$('#pttSet');
@@ -2689,7 +2689,7 @@ function renderPtt(){
     $('#pttHelp').innerHTML=`Not on macOS yet: hold <code>Space</code> while his window has focus, or bind <code>void listen</code> to a key (e.g. a Shortcuts or Raycast hotkey).`;
   }else{
     const [m,key]=pttLinux(k); $('#pttBar').hidden=true;
-    $('#pttHelp').innerHTML=`Hold a key combo anywhere to talk. Bind it in your desktop, e.g. Hyprland:<br><code>bind = ${esc(m)}, ${esc(key)}, exec, void ptt-down</code><br><code>bindr = ${esc(m)}, ${esc(key)}, exec, void ptt-up</code><br>sway: <code>bindsym</code> … <code>void ptt-down</code> and <code>bindsym --release</code> … <code>void ptt-up</code>. Other desktops: bind <code>void listen</code>.`;
+    $('#pttHelp').innerHTML=`Hold a key combo anywhere to talk. Bind it in your desktop, e.g. Hyprland:<br><code>bind = ${esc(m)}, ${esc(key)}, exec, void ptt-down</code><br><code>bindr = ${esc(m)}, ${esc(key)}, exec, void ptt-up</code><br>Hyprland 0.56 (Lua): <code>hl.bind("${esc(m).replace(/ /g," + ")} + ${esc(key)}", hl.dsp.exec_cmd("void ptt-down"))</code> and the same with <code>ptt-up</code> and <code>{ release = true }</code><br>sway: <code>bindsym</code> … <code>void ptt-down</code> and <code>bindsym --release</code> … <code>void ptt-up</code>. Other desktops: bind <code>void listen</code>.`;
   }
 }
 function pttName(e){                                // a keydown → "Ctrl+Alt+Space", or '' if it's only a modifier

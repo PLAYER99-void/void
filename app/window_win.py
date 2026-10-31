@@ -806,6 +806,9 @@ class VoidWindow(QWidget):
                     down = wparam in (0x100, 0x104)                     # WM_KEYDOWN / WM_SYSKEYDOWN
                     if down and not self.ptt_held and all(held(MOD_VKS[m]) for m in mods):
                         self.ptt_held = True
+                        if "win" in mods:                                # Win down + up with no other key opens Start (Space was swallowed): tap an unassigned key so it doesn't
+                            user32.keybd_event(0xE8, 0, 0, 0)
+                            user32.keybd_event(0xE8, 0, 2, 0)
                         self.remote.cmd.emit("ptt-down")
                         return 1
                     if self.ptt_held:

@@ -146,7 +146,7 @@ DEFAULTS = {
     # ask GitHub twice a day whether a newer Void is out (nothing about you is sent) and offer "Update now"
     "update_check": True,
     # hold this anywhere to talk, let go to send (Windows watches it itself; on Linux bind `void ptt-down` / `ptt-up`)
-    "ptt_hotkey": "Ctrl+Alt+Space",
+    "ptt_hotkey": "Win+Space",
     # how he sits on your desktop: "orb" (the floating blob) or "bar" (his eyes in a notch at the top of the screen)
     "presence": "orb",
     "bar_edge": "top",           # which screen edge the bar is merged into: top | bottom | left | right
