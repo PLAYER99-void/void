@@ -1,0 +1,67 @@
+name: upstream-sync
+# Keeps this fork's macos branch on top of PLAYER99-void/void. Upstream's notify-fork workflow starts it on every push
+# to upstream's main (a daily run catches any missed one); it fast-forwards main to upstream's main and merges that
+# into macos. A conflict stops the run without pushing anything, and GitHub emails the
+# failure; resolve it by hand. When upstream bumps app/VERSION it tags the merge and builds the DMG for that release.
+on:
+  repository_dispatch:
+    types: [upstream-push]
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: upstream-sync
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: macos
+          fetch-depth: 0
+      - name: Fetch upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/PLAYER99-void/void.git
+          git fetch --no-tags upstream main
+      - name: Anything new?
+        id: new
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "macos already has upstream's main"; echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            git log --oneline HEAD..upstream/main; echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Merge upstream into macos
+        if: steps.new.outputs.go == 'true'
+        run: |
+          if ! git merge --no-edit -m "Merge upstream $(git show upstream/main:app/VERSION) into macos" upstream/main; then
+            echo "::error::Upstream's changes conflict with macos in: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+            echo "::error::Nothing was pushed. Merge upstream/main into macos by hand."
+            exit 1
+          fi
+      - name: Check the merge compiles
+        if: steps.new.outputs.go == 'true'
+        run: python3 -m py_compile app/*.py
+      - name: Push main and macos
+        if: steps.new.outputs.go == 'true'
+        run: |
+          git push origin upstream/main:refs/heads/main
+          git push origin HEAD:refs/heads/macos
+      - name: Tag a new version and build its DMG
+        if: steps.new.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="v$(tr -d '[:space:]' < app/VERSION)"
+          if git ls-remote --exit-code --tags origin "refs/tags/$v" >/dev/null; then
+            echo "$v is already released; no new tag"
+          else
+            git tag -a "$v" -m "Void ${v#v} for macOS" && git push origin "$v"
+            gh workflow run macos.yml --ref "$v"        # a tag pushed with this token doesn't start other workflows
+          fi

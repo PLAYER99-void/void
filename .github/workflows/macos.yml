@@ -1,0 +1,39 @@
+name: macos
+# Builds Void.app and Void.dmg (arm64) with packaging/macos/build.sh. Pushing a tag like v1.0.0 also attaches the DMG
+# to that release.
+on:
+  push:
+    branches: [macos]
+    tags: ["v*"]
+    paths: ["app/**", "packaging/macos/**", "LICENSE", ".github/workflows/macos.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6        # build.sh needs uv (it fetches the standalone Python); this also caches uv's downloads
+        with:
+          enable-cache: true
+          cache-dependency-glob: packaging/macos/build.sh
+      - name: Version from the tag
+        if: github.ref_type == 'tag'
+        run: printf '%s\n' "${GITHUB_REF_NAME#v}" > app/VERSION            # what Void reports and compares for updates
+      - name: Build Void.app and Void.dmg
+        run: bash packaging/macos/build.sh build/macos
+      - name: Void.dmg
+        uses: actions/upload-artifact@v7
+        with:
+          name: Void.dmg
+          path: build/macos/Void.dmg
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish on the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: build/macos/Void.dmg
+          generate_release_notes: true

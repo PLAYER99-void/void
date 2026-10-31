@@ -13,6 +13,7 @@ VOICE="${VOID_VOICE:-en_US-amy-medium}"   # any piper voice name, e.g. en_US-rya
 say(){ printf '\033[1;32m●\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;33m!\033[0m %s\n' "$*"; }
 export PATH="$BIN:$PATH"
+MAC=0; [ "$(uname -s)" = Darwin ] && MAC=1
 
 # What each package is for:
 #   uv: python env · espeak-ng: fallback voice · pulse/alsa tools: mic recording + playing his voice
@@ -21,6 +22,9 @@ export PATH="$BIN:$PATH"
 #   libnotify: "done!" notifications · playerctl / brightnessctl: "pause the music", "dim the screen"
 if [ $USER_ONLY = 1 ]; then
   PM=none; pkgs=()            # system-wide install: the system packages are yours to manage (see the README)
+elif [ $MAC = 1 ]; then
+  PM=none; pkgs=()            # macOS: his window, mic and speakers all come from PyPI (PySide6, sounddevice)
+  command -v espeak-ng >/dev/null 2>&1 || say "macOS: no system packages needed (optional robot fallback voice: brew install espeak-ng)"
 elif command -v pacman >/dev/null 2>&1; then
   PM=pacman
   pkgs=(uv espeak-ng curl libpulse alsa-utils python-gobject python-cairo webkit2gtk-4.1 gst-plugins-base gst-plugins-good
@@ -66,7 +70,7 @@ if [ "$PM" != none ]; then
 fi
 
 # the parts he can't work without
-if ! /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","3.0"); gi.require_version("WebKit2","4.1")' 2>/dev/null; then
+if [ $MAC = 0 ] && ! /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","3.0"); gi.require_version("WebKit2","4.1")' 2>/dev/null; then
   warn "PyGObject + WebKit2GTK 4.1 aren't working — his window can't open. Install them and run ./install.sh again."
   [ "$PM" = pacman ] && warn "(if pacman complained, your system is probably behind — run 'sudo pacman -Syu' first)"
   exit 1
@@ -83,7 +87,7 @@ if ! command -v uv >/dev/null 2>&1; then
   fi
 fi
 
-mkdir -p "$ROOT/voices" "$BIN" "$HOME/.local/share/applications"
+mkdir -p "$ROOT/voices" "$BIN"; [ $MAC = 1 ] || mkdir -p "$HOME/.local/share/applications"
 if [ $USER_ONLY = 1 ]; then
   APPD="$SRC/app"             # the system-wide copy (e.g. /usr/share/void/app)
 else
@@ -105,6 +109,9 @@ if [ ! -x "$ROOT/venv/bin/python" ]; then
          uv venv --python "$(command -v python3)" "$ROOT/venv"; }
 fi
 uv pip install --python "$ROOT/venv/bin/python" -U faster-whisper pillow   # pillow: shrinks screenshots (fewer tokens)
+# macOS: his window is Qt (as on Windows) and the mic / speakers go through PortAudio. No -U on PySide6: a working
+# Qt is ~1 GB, so one that's already there is kept
+[ $MAC = 1 ] && uv pip install --python "$ROOT/venv/bin/python" PySide6 && uv pip install --python "$ROOT/venv/bin/python" -U sounddevice
 uv pip install --python "$ROOT/venv/bin/python" -U piper-tts \
   || warn "piper-tts failed to install — Void will use espeak-ng (robotic) instead"
 
@@ -122,7 +129,7 @@ fi
 IFS=- read -r loc spk q <<<"$VOICE"; lang="${loc%%_*}"
 url="https://huggingface.co/rhasspy/piper-voices/resolve/main/$lang/$loc/$spk/$q/$VOICE"
 if [ ! -f "$ROOT/voices/$VOICE.onnx" ]; then
-  say "Downloading voice $VOICE…"
+  say "Downloading voice ${VOICE}…"
   if curl -fL --progress-bar -o "$ROOT/voices/$VOICE.onnx.part" "$url.onnx" \
      && curl -fsL -o "$ROOT/voices/$VOICE.onnx.json" "$url.onnx.json"; then
     mv "$ROOT/voices/$VOICE.onnx.part" "$ROOT/voices/$VOICE.onnx"
@@ -144,7 +151,7 @@ say "Fetching the speech-recognition model…"
 [ $USER_ONLY = 1 ] || install -m755 "$SRC/bin/void" "$BIN/void"
 "$ROOT/venv/bin/python" "$APPD/server.py" --sync-autostart >/dev/null 2>&1 \
   && say "Void will start when you log in (turn off: Settings → More)" || true
-[ $USER_ONLY = 1 ] || cat > "$HOME/.local/share/applications/void.desktop" <<DESK
+[ $USER_ONLY = 1 ] || [ $MAC = 1 ] || cat > "$HOME/.local/share/applications/void.desktop" <<DESK
 [Desktop Entry]
 Name=Void
 Comment=Voice shell for Claude Code
@@ -158,6 +165,7 @@ DESK
 # restart a running server/window so they pick up the new files
 pkill -f "$APPD/server.py" >/dev/null 2>&1 || true
 pkill -f "$APPD/window.py" >/dev/null 2>&1 || true
+pkill -f "$APPD/window_win.py" >/dev/null 2>&1 || true    # (macOS: the Qt window)
 pkill -f -- "--user-data-dir=$ROOT/browser" >/dev/null 2>&1 || true    # an old browser-window fallback, if one is open
 
 echo
@@ -167,6 +175,8 @@ if ! command -v claude >/dev/null 2>&1 && [ ! -x "$BIN/claude" ]; then
 fi
 [ $USER_ONLY = 1 ] || case ":$PATH:" in *":$BIN:"*) ;; *) warn "$BIN isn't on your PATH — add it to your shell rc";; esac
 say "Done! Run:  void        (again to hide him · 'void doctor' if the mic acts up)"
+[ $MAC = 1 ] && { echo "   Tip: bind a key to 'void listen' (Shortcuts, Raycast, skhd…). The first time he listens or looks,"
+                  echo "   macOS asks to let your terminal use the microphone / record the screen: say yes."; exit 0; }
 echo "   Tip: bind a key to 'void listen' in your desktop's keyboard shortcuts, e.g."
 echo "     Hyprland: bind = SUPER, A, exec, void listen      sway / i3: bindsym \$mod+a exec void listen"
 echo "     GNOME / KDE / XFCE: Settings → Keyboard → Shortcuts → add a custom one running: void listen"
