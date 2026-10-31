@@ -1773,8 +1773,11 @@ function karaFlush(){ while(kara.length) karaPut(kara.shift(),true); }
 function karaDrop(){ kara.length=0; }
 function speaking(on){ if(info.voice_native) return; if(info.wake_word||info.barge_in) post('/api/speaking',{on}).catch(()=>{}); }
 /* tiny synth blips — soft and short. sfx('wake'|'menu'|'close'|'ok'|'done'|'error'|'remind'|'purr'|'pop') */
+let sfxWakeAt=0;
 function sfx(name){
-  if(!info.sfx) return; let a; try{ a=ac(); }catch(e){ return; }
+  if(!info.sfx) return;
+  if(name==='wake'){ const t=performance.now(); if(t-sfxWakeAt<2500) return; sfxWakeAt=t; }   // "hey Void" fires the wake event and then the mic opening: one blip, not two
+  let a; try{ a=ac(); }catch(e){ return; }
   const now=a.currentTime, out=a.createGain(); out.gain.value=.16; out.connect(a.destination);
   const tone=(f,t0,d,type='sine',f2=null,vol=1)=>{ const o=a.createOscillator(), g=a.createGain(); o.type=type; o.frequency.setValueAtTime(f,now+t0);
     if(f2) o.frequency.exponentialRampToValueAtTime(f2,now+t0+d); g.gain.setValueAtTime(0,now+t0); g.gain.linearRampToValueAtTime(vol,now+t0+.012);
