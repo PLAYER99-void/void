@@ -7,11 +7,15 @@ on:
     tags: ["v*"]
     paths: ["app/**", "packaging/macos/**", "LICENSE", ".github/workflows/macos.yml"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Attach the DMG to this existing release (e.g. v1.7.0); empty = just build"
+        required: false
 permissions:
   contents: write
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15                      # (macos-14 images are retired on 2 Nov 2026)
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -20,8 +24,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: packaging/macos/build.sh
       - name: Version from the tag
-        if: github.ref_type == 'tag'
-        run: printf '%s\n' "${GITHUB_REF_NAME#v}" > app/VERSION            # what Void reports and compares for updates
+        if: github.ref_type == 'tag' || inputs.tag != ''
+        run: printf '%s\n' "${TAG#v}" > app/VERSION            # what Void reports and compares for updates
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
       - name: Build Void.app and Void.dmg
         run: bash packaging/macos/build.sh build/macos
       - name: Void.dmg
@@ -32,8 +38,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish on the release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.tag != ''
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: build/macos/Void.dmg
           generate_release_notes: true
