@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Void: talk to your code</title>
+<meta name="description" content="Void is a little orb on your desktop. Say “hey Void” and he gets Claude Code to do the work in your project. Free and open source for Windows, macOS and Linux.">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="Void: talk to your code">
+<meta property="og:description" content="A little orb on your desktop. Say “hey Void” and he does the work. Free, open source, private.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://player99-void.github.io/void/icon.png">
+<link rel="icon" href="icon.png">
+<style>
+:root{--bg:#0b0b0b;--panel:#131313;--line:#232323;--text:#f3f3f3;--dim:#a8a8a8;--acc:#3d9b74;--hot:#7fd6ae;--sclera:#f3dccf;
+  --ease:cubic-bezier(.22,1,.36,1);--mono:ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:17px/1.6 system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
+  background-image:radial-gradient(60% 40% at 50% 0%,#12261d 0%,transparent 70%);background-repeat:no-repeat}
+a{color:var(--hot);text-decoration-thickness:1px;text-underline-offset:3px}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--hot);outline-offset:3px;border-radius:6px}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+h1,h2,h3{line-height:1.15;margin:0;letter-spacing:-.02em}
+h2{font-size:clamp(26px,4vw,36px);margin-bottom:10px}
+h3{font-size:19px;margin-bottom:6px}
+p{margin:0 0 14px}
+.dim{color:var(--dim)}
+section{padding:72px 0}
+
+/* top bar */
+nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0}
+nav .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px;color:var(--text);text-decoration:none}
+nav .brand img{width:32px;height:32px}
+nav .links{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+nav .links a{color:var(--dim);text-decoration:none;padding:6px 10px;border-radius:8px;font-size:15px}
+nav .links a:hover{color:var(--text);background:#ffffff12}
+
+/* hero */
+.hero{text-align:center;padding:36px 0 56px}
+.orb{width:170px;height:170px;margin:0 auto 22px;position:relative}
+.orb img{width:100%;height:100%;display:block;position:relative;animation:bob 6s ease-in-out infinite}
+.orb::before{content:"";position:absolute;inset:-26px;border-radius:50%;background:radial-gradient(circle,#3d9b7466 0%,transparent 68%);animation:glow 4s ease-in-out infinite}
+.orb::after{content:"";position:absolute;left:18%;right:18%;bottom:-20px;height:16px;border-radius:50%;background:#000;filter:blur(9px);opacity:.7}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes glow{0%,100%{opacity:.7;transform:scale(1)}50%{opacity:1;transform:scale(1.07)}}
+.hero h1{font-size:clamp(38px,7vw,64px);margin-bottom:14px}
+.hero h1 em{font-style:normal;color:var(--hot)}
+.hero .sub{font-size:clamp(18px,2.4vw,21px);color:var(--dim);max-width:600px;margin:0 auto 28px}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:999px;font-weight:650;font-size:16px;text-decoration:none;border:1px solid var(--line);
+  color:var(--text);background:var(--panel);transition:transform .25s var(--ease),border-color .25s,background .25s}
+.btn:hover{transform:translateY(-2px);border-color:var(--acc);color:#fff}
+.btn.main{background:var(--acc);border-color:var(--acc);color:#06130d}
+.btn.main:hover{background:var(--hot);border-color:var(--hot);color:#06130d}
+.hero .note{font-size:14px;color:var(--dim)}
+
+/* demo frames */
+.shot{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.shot img{display:block;width:100%;height:auto}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
+.split .shot{max-width:380px;width:100%;justify-self:center}
+.split.flip .shot{order:2}
+ul.ticks{list-style:none;margin:16px 0 0;padding:0}
+ul.ticks li{position:relative;padding-left:28px;margin-bottom:10px}
+ul.ticks li::before{content:"";position:absolute;left:0;top:.5em;width:12px;height:12px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 4px #3d9b7433}
+
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:28px;counter-reset:s}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;counter-increment:s}
+.step::before{content:counter(s);display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#3d9b7426;color:var(--hot);font-weight:700;margin-bottom:12px}
+.quote{font-family:var(--mono);font-size:14px;color:var(--hot)}
+
+/* features */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:30px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden;display:flex;flex-direction:column}
+.card .body{padding:16px 18px 20px}
+.card p{color:var(--dim);font-size:15px;margin:0}
+.card img{display:block;width:100%;height:auto;aspect-ratio:17/16;object-fit:cover;background:#000}
+
+/* install */
+.tabs{display:flex;gap:8px;margin:28px 0 14px;flex-wrap:wrap}
+.tab{font:inherit;font-size:15px;font-weight:600;color:var(--dim);background:var(--panel);border:1px solid var(--line);padding:9px 18px;border-radius:999px;cursor:pointer}
+.tab[aria-selected="true"]{color:#06130d;background:var(--acc);border-color:var(--acc)}
+.pane{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px}
+.pane[hidden]{display:none}
+.pane ol{margin:12px 0 0;padding-left:22px}
+.pane li{margin-bottom:6px}
+.code{display:flex;align-items:center;gap:10px;background:#070707;border:1px solid var(--line);border-radius:12px;padding:10px 12px 10px 14px;margin:14px 0;font-family:var(--mono);font-size:14px;overflow-x:auto}
+.code code{flex:1;white-space:nowrap}
+.copy{font:inherit;font-size:13px;font-weight:600;color:var(--text);background:#1c1c1c;border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+.copy:hover{border-color:var(--acc)}
+.small{font-size:14px;color:var(--dim)}
+.need{margin-top:22px;padding:16px 18px;border-left:3px solid var(--acc);background:#3d9b7414;border-radius:0 12px 12px 0}
+
+/* things to try */
+.try{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px}
+.try div{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px}
+.try h3{font-size:16px;color:var(--hot)}
+.try p{font-family:var(--mono);font-size:13.5px;color:var(--dim);margin:0 0 8px}
+
+footer{border-top:1px solid var(--line);padding:34px 0 50px;color:var(--dim);font-size:15px}
+footer .row{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+footer a{color:var(--dim)} footer a:hover{color:#fff}
+
+@media (max-width:820px){
+  section{padding:52px 0}
+  .split,.steps,.grid,.try{grid-template-columns:1fr}
+  .split.flip .shot{order:0}
+  nav .links a:not(.keep){display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .orb img,.orb::before{animation:none}
+  .btn{transition:none}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav aria-label="Main">
+    <a class="brand" href="#top"><img src="icon.png" alt="" width="32" height="32">Void</a>
+    <div class="links">
+      <a href="#meet">Meet him</a>
+      <a href="#try">Things to try</a>
+      <a class="keep" href="#install">Install</a>
+      <a class="keep" href="https://discord.gg/Y87KGhqbK5">Discord</a>
+    </div>
+  </nav>
+
+  <header class="hero" id="top">
+    <div class="orb"><img src="icon.png" alt="Void, a glossy black orb with peach eyes and green pupils" width="170" height="170"></div>
+    <h1>Talk to your <em>code</em>.</h1>
+    <p class="sub">Void is a little orb on your desktop. Say “hey Void” and he gets Claude Code to do the work in your project, then tells you how it went.</p>
+    <div class="cta">
+      <a class="btn main" id="dl" href="#install">Install Void</a>
+      <a class="btn" href="#meet">See what he can do</a>
+    </div>
+    <p class="note" id="dlNote">Free and open source · Windows, macOS and Linux</p>
+  </header>
+</div>
+
+<section style="padding-top:0">
+  <div class="wrap split">
+    <div class="shot"><img src="media/talk.webp" alt="Void talking, captions appearing word by word" width="480" height="640" fetchpriority="high"></div>
+    <div>
+      <h2>Just say it.</h2>
+      <p class="dim">No window, no taskbar button. Just him, floating over whatever you're doing.</p>
+      <ul class="ticks">
+        <li><b>“Hey Void, fix the failing tests.”</b> He works in your current folder.</li>
+        <li><b>Watch him work.</b> He holds up a tiny terminal so you see every step.</li>
+        <li><b>Private.</b> Your voice is turned into text on your own computer and never leaves it.</li>
+        <li><b>Tuck him away.</b> Push him into a screen edge and he becomes a notch.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="padding-top:20px">
+  <div class="wrap">
+    <h2>Your first two minutes</h2>
+    <div class="steps">
+      <div class="step"><h3>Start Void</h3><p class="dim">He appears in the corner. Drag him anywhere; he remembers the spot.</p></div>
+      <div class="step"><h3>Say “hey Void”</h3><p class="dim">His ring lights up and moves with your voice. Or just click him.</p></div>
+      <div class="step"><h3>Ask for something</h3><p class="dim"><span class="quote">“What does this project do?”</span> He answers out loud and shows what he did.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="helpers">
+  <div class="wrap split flip">
+    <div class="shot"><img src="media/work.webp" alt="Void working on a little terminal held under his eyes" width="480" height="640" loading="lazy"></div>
+    <div>
+      <h2>He can bring helpers.</h2>
+      <p class="dim">Ask for a big job and Void sends out subagents. Each one shows up as a little Void that buds off him and orbits while it works. When one finishes it folds back in with a check, and he tells you what it found, even after he's already answered.</p>
+      <p class="dim">Before he runs a command he asks first. Say “yes”, “no” or “always”.</p>
+    </div>
+  </div>
+</section>
+
+<section id="meet">
+  <div class="wrap">
+    <h2>Meet him</h2>
+    <p class="dim">He's a little guy with a lot of moods.</p>
+    <div class="grid">
+      <div class="card"><img src="media/listen.webp" alt="Void listening, his ring moving with your voice" width="340" height="320" loading="lazy"><div class="body"><h3>He listens</h3><p>Say “hey Void”, click him, or keep talking right after he answers.</p></div></div>
+      <div class="card"><img src="media/moods.webp" alt="Void cycling through his moods" width="340" height="320" loading="lazy"><div class="body"><h3>He reacts</h3><p>Happy, curious, shy, sleepy, starry-eyed. His face follows what he says, word by word.</p></div></div>
+      <div class="card"><img src="media/notch.webp" alt="Void as a notch at the top of the screen" width="480" height="400" loading="lazy"><div class="body"><h3>He becomes a notch</h3><p>Push him into any screen edge. He glows while you talk and his words drop out of the notch.</p></div></div>
+      <div class="card"><img src="media/skins.webp" alt="Void trying on skins and colours" width="340" height="320" loading="lazy"><div class="body"><h3>Dress him up</h3><p>Cat ears, a halo, a crown, headphones, a bow, and any colours you like.</p></div></div>
+      <div class="card"><img src="media/remember.webp" alt="Void remembering where your blog is" width="340" height="320" loading="lazy"><div class="body"><h3>He remembers</h3><p>Say “remember my blog is in ~/code/blog” and he knows it in every chat.</p></div></div>
+      <div class="card"><img src="media/pet.webp" alt="Void being petted" width="340" height="320" loading="lazy"><div class="body"><h3>Pet him</h3><p>Rub the mouse over him and he purrs. Click him too much and he dodges.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="try" style="padding-top:20px">
+  <div class="wrap">
+    <h2>Things to try</h2>
+    <div class="try">
+      <div><h3>Coding</h3><p>“Hey Void, run the tests”</p><p>“Fix the failing test”</p><p>“Make the button blue”</p></div>
+      <div><h3>Your screen</h3><p>“What's this error on my screen?”</p><p>“Explain what I copied”</p><p>“Watch my screen”</p></div>
+      <div><h3>Instant</h3><p>“Timer 10 minutes”</p><p>“Volume up”</p><p>“Remind me at 5 to call mom”</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Install</h2>
+    <p class="dim">Free, MIT licensed, a few minutes to set up.</p>
+    <div class="need"><b>You need <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> first.</b> Install it, then run <code>claude</code> once in a terminal to sign in. Void is the voice and face; Claude Code does the work.</div>
+
+    <div class="tabs" role="tablist" aria-label="Your system">
+      <button class="tab" role="tab" id="t-win" aria-controls="p-win" aria-selected="false">Windows</button>
+      <button class="tab" role="tab" id="t-mac" aria-controls="p-mac" aria-selected="false">macOS</button>
+      <button class="tab" role="tab" id="t-lin" aria-controls="p-lin" aria-selected="false">Linux</button>
+    </div>
+
+    <div class="pane" role="tabpanel" id="p-win" aria-labelledby="t-win" hidden>
+      <a class="btn main" href="https://github.com/PLAYER99-void/void/releases/latest/download/VoidSetup.exe">Download VoidSetup.exe</a>
+      <ol>
+        <li>Run it and wait a few minutes while it sets up his voice and hearing.</li>
+        <li>Find <b>Void</b> in your Start menu.</li>
+      </ol>
+      <p class="small" style="margin-top:14px">No admin needed. Uninstall from Settings → Apps. If it says “Windows protected your PC”, click <b>More info → Run anyway</b>.</p>
+    </div>
+
+    <div class="pane" role="tabpanel" id="p-mac" aria-labelledby="t-mac" hidden>
+      <a class="btn main" href="https://github.com/PLAYER99-void/void/releases/latest/download/Void.dmg">Download Void.dmg</a>
+      <ol>
+        <li>Open the download and drag <b>Void</b> into Applications.</li>
+        <li>Open it. macOS asks to let him use the microphone and record the screen: say yes.</li>
+      </ol>
+      <p class="small" style="margin-top:14px">For Apple Silicon Macs (M1 or newer). The app isn't notarized by Apple, so the first launch is blocked: open <b>System Settings → Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b> next to Void.</p>
+    </div>
+
+    <div class="pane" role="tabpanel" id="p-lin" aria-labelledby="t-lin" hidden>
+      <p style="margin:0">Paste this into a terminal:</p>
+      <div class="code"><code id="linCmd">curl -fsSL https://raw.githubusercontent.com/PLAYER99-void/void/main/get.sh | bash</code><button class="copy" type="button" data-copy="linCmd">Copy</button></div>
+      <p class="small" style="margin:0">Works on Ubuntu, Debian, Fedora and Arch. It sets up Void, his voice and hearing, and starts him. Then run <code>void</code> any time. Prefer a package? Grab a .deb, .rpm or Arch package from the <a href="https://github.com/PLAYER99-void/void/releases/latest">latest release</a>.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <div>Void is free and open source, MIT licensed. <a href="https://github.com/PLAYER99-void/void">Source code</a></div>
+    <div><a href="https://github.com/PLAYER99-void/void/blob/main/docs/GUIDE.md">Full guide</a> · <a href="https://discord.gg/Y87KGhqbK5">Help on Discord</a> · <a href="https://github.com/PLAYER99-void/void/issues">Report a bug</a></div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || "";
+  var os = /win/i.test(ua) ? "win" : /mac|iphone|ipad/i.test(ua) ? "mac" : "lin";
+  var names = {win: "Windows", mac: "macOS", lin: "Linux"};
+  var tabs = ["win", "mac", "lin"];
+
+  function show(id, focus){
+    tabs.forEach(function(t){
+      var on = t === id, tab = document.getElementById("t-" + t);
+      tab.setAttribute("aria-selected", on);
+      tab.tabIndex = on ? 0 : -1;
+      document.getElementById("p-" + t).hidden = !on;
+      if (on && focus) tab.focus();
+    });
+  }
+  tabs.forEach(function(t, i){
+    var tab = document.getElementById("t-" + t);
+    tab.addEventListener("click", function(){ show(t); });
+    tab.addEventListener("keydown", function(e){
+      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (d) { e.preventDefault(); show(tabs[(i + d + tabs.length) % tabs.length], true); }
+    });
+  });
+  show(os);
+
+  var dl = document.getElementById("dl");
+  dl.textContent = "Install for " + names[os];
+  document.getElementById("dlNote").textContent = "Free and open source · also for " +
+    tabs.filter(function(t){ return t !== os; }).map(function(t){ return names[t]; }).join(" and ");
+  dl.addEventListener("click", function(){ show(os); });
+
+  document.querySelectorAll(".copy").forEach(function(b){
+    b.addEventListener("click", function(){
+      var text = document.getElementById(b.dataset.copy).textContent;
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function(){
+        b.textContent = "Copied"; setTimeout(function(){ b.textContent = "Copy"; }, 1800);
+      }, function(){
+        var r = document.createRange(); r.selectNodeContents(document.getElementById(b.dataset.copy));
+        var s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Press Ctrl+C";
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
