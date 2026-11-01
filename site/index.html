@@ -52,7 +52,8 @@ nav a{text-decoration:none}
 nav a:hover{text-decoration:underline}
 nav .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:18px}
 nav .brand img{width:26px;height:26px}
-nav .links{display:flex;gap:20px}
+nav .links{display:flex;gap:20px;align-items:flex-start}
+nav .get-link small{display:block;font-size:11px;line-height:1.1;color:var(--dim);letter-spacing:-.01em}
 
 /* ---- his live face (app/static/index.html as face.html, 340x460, scaled up; only his stage shows) ----------------- */
 .face{position:relative;aspect-ratio:340/330;
@@ -126,6 +127,7 @@ html.dragging,html.dragging *{cursor:grabbing!important;user-select:none}
 .detail .acts{display:flex;gap:10px;margin-top:26px;flex-wrap:wrap}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;font:inherit;font-size:15px;text-decoration:none;cursor:pointer;
   background:var(--ink);color:#f9f9f9;border:1px solid var(--ink)}
+.btn[hidden]{display:none}
 .btn.alt{background:transparent;color:var(--ink)}
 .btn:hover{background:#000;color:#f9f9f9}
 .detail .x{position:absolute;top:18px;right:3%;font:inherit;font-size:15px;background:none;border:0;cursor:pointer;color:var(--ink)}
@@ -133,6 +135,7 @@ html.dragging,html.dragging *{cursor:grabbing!important;user-select:none}
 /* ---- get him -------------------------------------------------------------------------------------------------- */
 .get{padding:200px 3% 140px}
 .get h2{font-size:clamp(64px,13vw,200px)}
+.get .free{font-size:clamp(24px,3vw,44px);font-weight:700;letter-spacing:-.05em;line-height:1;margin-top:-.1em;color:var(--acc)}
 .get .need{margin-top:20px;max-width:520px;font-size:18px;line-height:1.35;color:var(--dim)}
 .rows{margin-top:50px;border-top:1px solid var(--ink)}
 .os{display:grid;grid-template-columns:1fr auto;gap:8px 24px;align-items:center;padding:22px 0;border-bottom:1px solid var(--ink)}
@@ -142,6 +145,16 @@ html.dragging,html.dragging *{cursor:grabbing!important;user-select:none}
 .os.mine .you{display:inline}
 .cmd{grid-column:1/-1;display:flex;gap:10px;align-items:center;background:#fff;border:1px solid var(--ink);padding:8px 8px 8px 14px;overflow-x:auto}
 .cmd code{flex:1;white-space:nowrap;font-size:13px}
+
+/* ---- his stickers ------------------------------------------------------------------------------------------------ */
+.stickers{padding:60px 3% 140px}
+.stickers h2{font-size:clamp(56px,10vw,150px)}
+.stickers .need{margin:16px 0 30px;max-width:520px;font-size:18px;line-height:1.35;color:var(--dim)}
+.sticker-grid{display:grid;grid-template-columns:repeat(8,1fr);margin-top:24px;border-top:1px solid var(--line);border-left:1px solid var(--line)}
+.sticker{display:block;padding:10px;background:none;border:0;border-right:1px solid var(--line);border-bottom:1px solid var(--line);cursor:pointer;font:inherit;color:inherit}
+.sticker img{display:block;width:100%;height:auto;aspect-ratio:1;transition:transform .35s var(--out)}
+.sticker:hover img,.sticker:focus-visible img{transform:scale(1.1) rotate(-3deg)}
+.sticker-view img{display:block;width:min(100%,420px);height:auto;margin:0 auto}
 
 footer{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:26px 3% 40px;border-top:1px solid var(--line);font-size:14px}
 footer .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:22px;letter-spacing:-.05em}
@@ -154,6 +167,7 @@ footer a{text-decoration:none} footer a:hover{text-decoration:underline}
   .hero .face{position:relative;left:auto;top:auto;width:100%;max-width:520px;margin:0 auto}
   .hero-text{position:relative;right:auto;top:auto;padding:0 6% 40px}
   .cards{grid-template-columns:repeat(2,1fr)}
+  .sticker-grid{grid-template-columns:repeat(4,1fr)}
   .detail .inner{grid-template-columns:1fr;gap:0}
   .detail .face{max-width:360px;margin:0 auto}
   nav .links a:not(.keep){display:none}
@@ -164,7 +178,7 @@ footer a{text-decoration:none} footer a:hover{text-decoration:underline}
   .js .fade{opacity:1;transition:none}
   #trail{display:none}
   .js .pack .item{opacity:1;scale:1;animation:none!important}
-  .disc,.hover-border,.detail .face,.detail,.detail .inner{transition:none}
+  .disc,.hover-border,.detail .face,.detail,.detail .inner,.sticker img{transition:none}
 }
 </style>
 </head>
@@ -174,7 +188,7 @@ footer a{text-decoration:none} footer a:hover{text-decoration:underline}
 
 <nav>
   <a class="brand" href="#top"><img src="icon.png" alt="" width="26" height="26">void</a>
-  <div class="links"><a href="#about">about</a><a href="#notch">notch</a><a href="#looks">looks</a><a class="keep" href="#get">get him</a><a class="keep" href="https://discord.gg/Y87KGhqbK5">discord</a></div>
+  <div class="links"><a href="#about">about</a><a href="#notch">notch</a><a href="#looks">looks</a><a href="#stickers">stickers</a><a class="keep get-link" href="#get">get him<small>he's free</small></a><a class="keep" href="https://discord.gg/Y87KGhqbK5">discord</a></div>
 </nav>
 
 <header class="hero" id="top">
@@ -216,6 +230,7 @@ footer a{text-decoration:none} footer a:hover{text-decoration:underline}
 
   <section class="get" id="get">
     <h2 class="big" data-split>get him.</h2>
+    <p class="free">he's free</p>
     <p class="need">free and open source. you need <a href="https://docs.anthropic.com/en/docs/claude-code">claude code</a> first: install it, then run <code>claude</code> once in a terminal to sign in.</p>
     <div class="rows">
       <div class="os" id="os-win">
@@ -235,6 +250,13 @@ footer a{text-decoration:none} footer a:hover{text-decoration:underline}
         <p class="note">paste it into a terminal. it sets up void, his voice and hearing, and starts him. or grab a .deb, .rpm or arch package from the <a href="https://github.com/PLAYER99-void/void/releases/latest">latest release</a>.</p>
       </div>
     </div>
+  </section>
+
+  <section class="stickers" id="stickers">
+    <h2 class="big" data-split>his stickers.</h2>
+    <p class="need">pick one, then copy it or save it. they're free too.</p>
+    <a class="bar" href="stickers/void-stickers.zip" download><span>download all of them</span><span id="stickerCount"></span></a>
+    <div class="sticker-grid" id="stickerGrid"></div>
   </section>
 </main>
 
@@ -256,6 +278,17 @@ footer a{text-decoration:none} footer a:hover{text-decoration:underline}
       <h3 id="dTitle"></h3>
       <p id="dText"></p>
       <div class="acts"><button class="btn alt" type="button" id="dRandom">random colours</button><a class="btn" href="#get" id="dGet">get him</a></div>
+    </div>
+  </div>
+</div>
+
+<div class="detail sticker-view" id="sView" role="dialog" aria-modal="true" aria-labelledby="sTitle" hidden>
+  <button class="x" type="button" id="sClose">close ✕</button>
+  <div class="inner">
+    <img id="sImg" alt="" width="320" height="320">
+    <div>
+      <h3 id="sTitle"></h3>
+      <div class="acts"><button class="btn" type="button" id="sCopy">copy</button><a class="btn alt" id="sSave" download>save</a><button class="btn alt" type="button" id="sNext">next one</button></div>
     </div>
   </div>
 </div>
@@ -545,6 +578,54 @@ footer a{text-decoration:none} footer a:hover{text-decoration:underline}
     es.forEach(function(e){ var fr = e.target.querySelector("iframe"); if (fr) fr.style.display = e.isIntersecting ? "" : "none"; });
   }, {rootMargin: "150px 0px"});
   document.querySelectorAll(".face,.disc").forEach(function(box){ running.observe(box); });
+
+  // ---- his stickers: pick one, then copy it or save it ---------------------------------------------------------------------------
+  var STICKERS = [["hey_void","hey void"],["w_clip","w clip"],["banger","banger"],["0_views","0 views"],["shadowbanned","shadowbanned"],["it_went_viral","it went viral"],["bro","bro."],["mid","mid"],["my_bad","my bad"],["huh","huh?"],["let_me_cook","let me cook"],["locked_in","locked in"],["posting_tomorrow","posting tomorrow"],["we_eating","we eating"],["trust_me","trust me"],["pls_watch","pls watch"],["king_of_clips","king of clips"],["demonetized","demonetized"],["100_original","100% original"],["first_payout","first payout"],["i_m_listening","i'm listening"],["what_s_the_hook","what's the hook?"],["purr","purr"],["hi","hi"],["thanks","thanks"],["still_growing","still growing"],["trending_sound","trending sound"],["cute","cute"],["read_the_brief","read the brief"],["rendering","rendering..."],["copyright_strike","copyright strike"],["be_honest","be honest"],["is_this_a_scam","is this a scam?"],["paid","paid"],["how","how?!"],["good_hook","good hook"],["love_this","love this"],["stole_your_clip","stole your clip"],["zzz","zzz"],["10k","10k!"]];
+  var sGrid = document.getElementById("stickerGrid"), sView = document.getElementById("sView"), sOpen = false, sCur = 0, sFocus = null;
+  var sCopy = document.getElementById("sCopy"), sImg = document.getElementById("sImg"), sSave = document.getElementById("sSave");
+  document.getElementById("stickerCount").textContent = STICKERS.length;
+  if (!navigator.clipboard || !window.ClipboardItem) sCopy.hidden = true;
+  function showSticker(i){
+    sCur = i;
+    sImg.src = "stickers/" + STICKERS[i][0] + ".png"; sImg.alt = "void sticker: " + STICKERS[i][1];
+    document.getElementById("sTitle").textContent = STICKERS[i][1];
+    sSave.href = sImg.getAttribute("src"); sSave.download = "void-" + STICKERS[i][0] + ".png";
+    sCopy.textContent = "copy";
+  }
+  function openSticker(i){
+    showSticker(i); sFocus = document.activeElement;
+    sView.hidden = false; sOpen = true;
+    requestAnimationFrame(function(){ sView.classList.add("open"); });
+    document.getElementById("sClose").focus();
+  }
+  function closeSticker(){
+    sView.classList.remove("open"); sOpen = false;
+    setTimeout(function(){ if (!sOpen) sView.hidden = true; }, 400);
+    if (sFocus) sFocus.focus();
+  }
+  STICKERS.forEach(function(s, i){
+    var b = document.createElement("button");
+    b.className = "sticker"; b.type = "button"; b.setAttribute("aria-label", s[1]);
+    b.innerHTML = '<img loading="lazy" width="320" height="320" alt="">';
+    b.firstChild.src = "stickers/" + s[0] + ".png";
+    b.addEventListener("click", function(){ openSticker(i); });
+    sGrid.appendChild(b);
+  });
+  sCopy.addEventListener("click", function(){
+    var blob = fetch(sImg.src).then(function(r){ return r.blob(); });   // handed over as a promise so safari allows it
+    navigator.clipboard.write([new ClipboardItem({"image/png": blob})]).then(function(){
+      sCopy.textContent = "copied"; setTimeout(function(){ sCopy.textContent = "copy"; }, 1800);
+    }, function(){ sCopy.textContent = "use save"; });
+  });
+  document.getElementById("sNext").addEventListener("click", function(){ showSticker((sCur + 1) % STICKERS.length); });
+  document.getElementById("sClose").addEventListener("click", closeSticker);
+  sView.addEventListener("click", function(e){ if (e.target === sView) closeSticker(); });
+  addEventListener("keydown", function(e){
+    if (!sOpen) return;
+    if (e.key === "Escape") closeSticker();
+    if (e.key === "ArrowRight") showSticker((sCur + 1) % STICKERS.length);
+    if (e.key === "ArrowLeft") showSticker((sCur + STICKERS.length - 1) % STICKERS.length);
+  });
 
   // ---- which computer is this? ---------------------------------------------------------------------------------------------
   var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || "";
